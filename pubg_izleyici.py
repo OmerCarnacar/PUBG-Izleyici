@@ -20,12 +20,13 @@ S = 1.0  # ekran ölçeği (96 DPI = 1.0); pencere açılınca hesaplanır
 def px(v):
     return int(round(v * S))
 
-VERSION = '1.1.1'
+VERSION = '1.1.2'
 REPO = 'OmerCarnacar/PUBG-Izleyici'
 DEV = 'Ömer Çarnaçar'
 LINKEDIN = 'https://www.linkedin.com/in/omercarnacar'  # talep, öneri ve hata bildirimleri buradan
 # Her sürümde en üste eklenir; program güncellenince "Yenilikler" penceresinde gösterilir.
 CHANGES = [
+    ('1.1.2', ["Düzeltme: program çöker ya da Görev Yöneticisi'nden kapatılırsa FPS ölçüm aracı (PresentMon) arka planda kalmıyor"]),
     ('1.1.1', ['Yeni modern arayüz: sol menü, sekme göstergesi, daha geniş içerik alanı',
                'Talep / öneri bildir: tek tıkla LinkedIn üzerinden geliştiriciye ulaş',
                'Güncelleme durumu sol menüde: her açılışta kontrol edilir, "Güncel" ya da indirme durumu görünür',
@@ -97,6 +98,29 @@ def get_presentmon():
     return None
 
 
+_JOB = [None]
+
+
+def kill_with_me(proc):
+    """Alt süreci bir Windows iş nesnesine bağlar: program çökerse ya da Görev Yöneticisi'nden kapatılırsa
+    işletim sistemi alt süreci de kapatır (yoksa PresentMon oyun kapanana kadar arka planda kalıyordu)."""
+    try:
+        k = ctypes.windll.kernel32
+        if _JOB[0] is None:
+            k.CreateJobObjectW.restype = ctypes.c_void_p
+            k.SetInformationJobObject.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32]
+            job = k.CreateJobObjectW(None, None)
+            info = ctypes.create_string_buffer(144)  # JOBOBJECT_EXTENDED_LIMIT_INFORMATION (64 bit)
+            struct.pack_into('<I', info, 16, 0x2000)  # LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+            if not job or not k.SetInformationJobObject(job, 9, info, 144):
+                return
+            _JOB[0] = job  # tutamak program ömrü boyunca açık kalır
+        k.AssignProcessToJobObject.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        k.AssignProcessToJobObject(_JOB[0], int(proc._handle))
+    except Exception:
+        pass
+
+
 class PresentMon:
     def __init__(self, exe):
         self.exe, self.proc, self.lock = exe, None, threading.Lock()
@@ -119,6 +143,7 @@ class PresentMon:
                 '--stop_existing_session', '--terminate_on_proc_exit']
         self.proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                      text=True, bufsize=1, creationflags=NOWIN)
+        kill_with_me(self.proc)
         threading.Thread(target=self._read, args=(self.proc,), daemon=True).start()
 
     def _read(self, proc):

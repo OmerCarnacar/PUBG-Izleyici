@@ -1,4 +1,1 @@
-- Yeni modern arayüz: sol menü, sekme göstergesi, daha geniş içerik alanı
-- Talep / öneri bildir: tek tıkla LinkedIn üzerinden geliştiriciye ulaş (https://www.linkedin.com/in/omercarnacar)
-- Güncelleme durumu sol menüde: her açılışta kontrol edilir, "Güncel" ya da indirme durumu görünür
-- Geliştirici bilgisi eklendi
+- Düzeltme: program çöker ya da Görev Yöneticisi'nden kapatılırsa FPS ölçüm aracı (PresentMon) arka planda kalmıyor
