@@ -20,12 +20,18 @@ S = 1.0  # ekran ölçeği (96 DPI = 1.0); pencere açılınca hesaplanır
 def px(v):
     return int(round(v * S))
 
-VERSION = '1.3.0'
+VERSION = '1.3.1'
 REPO = 'OmerCarnacar/PUBG-Izleyici'
 DEV = 'Ömer Çarnaçar'
 LINKEDIN = 'https://www.linkedin.com/in/omercarnacar'  # talep, öneri ve hata bildirimleri buradan
 # Her sürümde en üste eklenir; program güncellenince "Yenilikler" penceresinde gösterilir.
 CHANGES = [
+    ('1.3.1', [
+        "Düzeltme: oyun içi FPS sınırı hiç uygulanmıyordu — program PUBG'nin tanımadığı bir değer yazıyordu ve oyun sınırsıza dönüyordu",
+        'Kenar yumuşatma önerisi Orta (profesyonellerin çoğu; Yüksek uzaktaki hedefi bulanıklaştırır)',
+        'Yeni öneri: lobi FPS sınırı 60 (lobide ekran kartı boşuna %100 çalışmasın)',
+        'Yeni öneri: efekt sesi %100 (ayak ve araç sesleri bu kanalda)',
+    ]),
     ('1.3.0', [
         'Yeni: Takım Sesi sekmesi — mikrofon, PUBG oyun içi ses ve Discord ayarları kontrol edilir; arka plan sesi gitmesin diye öneriler (Krisp, bas-konuş, AMD Noise Suppression, Stereo Karışımı uyarısı) ve tek tıkla uygulama',
         "İşlemci sıcaklığı artık AMD Software (Adrenalin) ve Ryzen Master ile aynı: HWiNFO'nun CPU Tctl/Tdie değeri. HWiNFO kuruluysa program onu kendisi ayarlar ve arka planda başlatır",
@@ -460,7 +466,8 @@ GFX = [
     ('sg.EffectsQuality', 1, 'Efektler', 0, 1, 'Düşük öneriliyor. Bazı kaynaklara göre Çok Düşük, duman ve patlamalarda anlık takılma yapabiliyor.'),
     ('sg.FoliageQuality', 0, 'Yeşillik', 0, 0, 'Çok Düşük seç. Yüksek seviyede çimen, yere yatan oyuncuyu gizler.'),
     ('sg.TextureQuality', 3, 'Dokular', 2, 4, '12 GB ve üstü VRAM varsa Yüksek, 8-10 GB varsa Orta. VRAM %95\'i geçerse bir kademe düşür.'),
-    ('sg.AntiAliasingQuality', 2, 'Kenar Yumuşatma', 2, 3, 'Orta ya da Yüksek seç. Ultra çok az netlik katar ama %6-8 FPS götürür.'),
+    ('sg.AntiAliasingQuality', 2, 'Kenar Yumuşatma', 2, 2, 'Orta en iyi denge: Yüksek ve üstü görüntüyü yumuşatıp uzaktaki hedefi '
+     'bulanıklaştırır, ekran kartını da gereksiz yükler. Profesyonellerin çoğu Orta kullanır. FSR/DLSS için en az Orta gerekir.'),
 ]
 BG_APPS = {'onedrive.exe': 'OneDrive', 'opera.exe': 'Opera', 'chrome.exe': 'Chrome', 'msedge.exe': 'Edge',
            'discord.exe': 'Discord (oyun içi overlay kapalı olmalı)', 'warp-svc.exe': 'Cloudflare WARP',
@@ -664,8 +671,21 @@ def check_settings():
                "senkronizasyon devre dışı kalır ve gecikme artar.")
         if lt.lower() == 'unlimited':
             out.append(('warn', 'Oyun içi FPS sınırı', 'Sınırsız', f'Özel: {cap}', why))
+        elif lt != 'Customizable':
+            out.append(('warn', 'Oyun içi FPS sınırı', f'geçersiz değer ({lt})', f'Özel: {cap}',
+                        'Oyun bu değeri tanımıyor ve sınırsız çalışıyor. "Önerilenleri uygula" düzeltir.'))
         else:
-            out.append(('ok' if cap - 8 <= lim <= cap else 'warn', 'Oyun içi FPS sınırı', f'{lt} {lim:.0f}', f'Özel: {cap}', why))
+            out.append(('ok' if cap - 8 <= lim <= cap else 'warn', 'Oyun içi FPS sınırı', f'Özel {lim:.0f}', f'Özel: {cap}', why))
+        lob = d.get('LobbyFrameRateLimitType')
+        if lob is not None:
+            out.append(('ok' if lob in ('Fixed_30', 'Fixed_60') else 'warn', 'Lobi FPS sınırı',
+                        {'Unlimited': 'Sınırsız', 'Fixed_30': '30', 'Fixed_60': '60'}.get(lob, lob), '60',
+                        'Lobide sınırsız FPS ekran kartını boşuna %100 çalıştırır: ısı, fan sesi ve elektrik. Oyuna etkisi yok.'))
+        efx = num(d.get('EffectSoundVolume'))
+        if efx is not None:
+            out.append(('ok' if efx >= 99.5 else 'warn', 'Efekt sesi', f'%{efx:.0f}', '%100',
+                        'Ayak sesi, araç ve silah sesleri bu kanaldadır. Kısıksa düşmanı geç duyarsın; '
+                        'genel sesi kulaklıktan ayarla, müziği kapalı tut.'))
         out.append(('ok' if d.get('bUseVSync', 'False') == 'False' else 'bad', 'Dikey Senkronizasyon (V-Sync)',
                     'Kapalı' if d.get('bUseVSync', 'False') == 'False' else 'Açık', 'Kapalı', 'Açıkken gecikme artar. FreeSync zaten açık.'))
         out.append(('ok' if d.get('bMotionBlur', 'False') == 'False' else 'bad', 'Hareket Bulanıklığı',
@@ -926,11 +946,18 @@ def apply_recommended():
         if fov and fov < 100:
             setk('FpsCameraFov', '103.000000'); msgs.append(f'FPP görüş açısı (FOV): {fov:.0f} → 103')
         cap = LIM['cap']
-        if d.get('InGameFrameRateLimitType') != 'Custom' or abs(num(d.get('InGameCustomFrameRateLimit'), 0) - cap) > 0.5:
-            setk('InGameFrameRateLimitType', 'Custom')
+        # PUBG'nin tanıdığı değer "Customizable". Eski sürümler "Custom" yazıyordu; oyun bunu tanımayıp
+        # sınırsıza dönüyordu, yani FPS sınırı hiç uygulanmıyordu.
+        if d.get('InGameFrameRateLimitType') != 'Customizable' or abs(num(d.get('InGameCustomFrameRateLimit'), 0) - cap) > 0.5:
+            setk('InGameFrameRateLimitType', 'Customizable')
             setk('InGameCustomFrameRateLimit', f'{cap:.6f}')
             setk('FrameRateLimit', f'{cap:.6f}')
             msgs.append(f'Oyun içi FPS sınırı → Özel {cap}')
+        if d.get('LobbyFrameRateLimitType', 'Fixed_60') not in ('Fixed_30', 'Fixed_60'):
+            setk('LobbyFrameRateLimitType', 'Fixed_60'); msgs.append('Lobi FPS sınırı → 60')
+        if num(d.get('EffectSoundVolume'), 100) < 99.5:
+            setk('EffectSoundVolume', '100.000000')
+            msgs.append(f"Efekt sesi: %{num(d.get('EffectSoundVolume'), 0):.0f} → %100")
         for k, v, nm in (('bUseVSync', 'False', 'V-Sync → Kapalı'), ('bMotionBlur', 'False', 'Hareket bulanıklığı → Kapalı'),
                          ('bSharpen', 'True', 'Keskinleştirme → Açık'), ('bPreloadingMap', 'True', 'Haritayı önceden yükle → Açık')):
             if k in d and d[k] != v:

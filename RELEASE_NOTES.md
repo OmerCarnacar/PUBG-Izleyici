@@ -1,3 +1,4 @@
-- Yeni: Takım Sesi sekmesi — mikrofon, PUBG oyun içi ses ve Discord ayarları kontrol edilir; arka plan sesi gitmesin diye öneriler (Krisp, bas-konuş, AMD Noise Suppression, Stereo Karışımı uyarısı) ve tek tıkla uygulama
-- İşlemci sıcaklığı artık AMD Software (Adrenalin) ve Ryzen Master ile aynı: HWiNFO'nun CPU Tctl/Tdie değeri. HWiNFO kuruluysa program onu kendisi ayarlar ve arka planda başlatır
-- Core Temp sadece HWiNFO yoksa kullanılır (çekirdek sensörü, Tctl/Tdie'den birkaç derece düşük çıkabilir)
+- Düzeltme: oyun içi FPS sınırı hiç uygulanmıyordu — program PUBG'nin tanımadığı bir değer yazıyordu ve oyun sınırsıza dönüyordu
+- Kenar yumuşatma önerisi Orta (profesyonellerin çoğu; Yüksek uzaktaki hedefi bulanıklaştırır)
+- Yeni öneri: lobi FPS sınırı 60 (lobide ekran kartı boşuna %100 çalışmasın)
+- Yeni öneri: efekt sesi %100 (ayak ve araç sesleri bu kanalda)
