@@ -20,3 +20,8 @@ FPS ölçümü: [Intel PresentMon](https://github.com/GameTechDev/PresentMon) (M
 3. Kullanıcıların programı yeni sürümü saatte bir kontrol eder, indirir (SHA-256 doğrulamalı) ve PUBG kapalıyken kendini günceller.
 
 Not: Otomatik güncelleme GitHub API'sini kimliksiz çağırır; bu yüzden depo **herkese açık** olmalıdır.
+
+## Geliştiren
+**Ömer Çarnaçar** · [LinkedIn](https://www.linkedin.com/in/omercarnacar)
+
+Talep, öneri ve hata bildirimleri için LinkedIn üzerinden ulaşabilirsiniz (programda sol menüde "Talep / öneri bildir").

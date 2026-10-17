@@ -20,10 +20,16 @@ S = 1.0  # ekran ölçeği (96 DPI = 1.0); pencere açılınca hesaplanır
 def px(v):
     return int(round(v * S))
 
-VERSION = '1.1.0'
+VERSION = '1.1.1'
 REPO = 'OmerCarnacar/PUBG-Izleyici'
+DEV = 'Ömer Çarnaçar'
+LINKEDIN = 'https://www.linkedin.com/in/omercarnacar'  # talep, öneri ve hata bildirimleri buradan
 # Her sürümde en üste eklenir; program güncellenince "Yenilikler" penceresinde gösterilir.
 CHANGES = [
+    ('1.1.1', ['Yeni modern arayüz: sol menü, sekme göstergesi, daha geniş içerik alanı',
+               'Talep / öneri bildir: tek tıkla LinkedIn üzerinden geliştiriciye ulaş',
+               'Güncelleme durumu sol menüde: her açılışta kontrol edilir, "Güncel" ya da indirme durumu görünür',
+               'Geliştirici bilgisi eklendi']),
     ('1.1.0', ['Çok daha akıcı: arayüz her saniye ~0.25 sn donuyordu, artık ~6 ms (yaklaşık 45 kat hızlı)',
                'Ayar Kontrolü, Sistem Bilgisi ve ayar uygulama artık pencereyi dondurmuyor',
                'Program anında açılıyor (FPS aracı arka planda hazırlanıyor)',
@@ -1217,6 +1223,7 @@ def install_update(new_exe):
 
 # ---------------- Modern arayüz parçaları ----------------
 C_BG, C_CARD, C_LINE = '#0e1014', '#181b22', '#262b36'
+C_SIDE = '#0a0c10'  # sol menü
 C_TXT, C_SUB, C_ACC = '#e8eaed', '#8b93a1', '#4cc2ff'
 C_OK, C_WARN, C_BAD = '#3ddc84', '#ffc845', '#ff5c5c'
 F_NUM = 'Bahnschrift'
@@ -1432,43 +1439,74 @@ class App:
         r.title('PUBG Canlı İzleyici')
         r.configure(bg=self.BG)
         r.attributes('-topmost', True)
-        r.geometry(f'{px(1010)}x{px(820)}')
-        r.minsize(px(980), px(780))
+        r.geometry(f'{px(1210)}x{px(820)}')
+        r.minsize(px(1180), px(780))
         style_window(r)
 
-        bar = tk.Frame(r, bg=self.BG); bar.pack(fill='x', padx=12, pady=(10, 2))
-        tk.Label(bar, text='PUBG  İZLEYİCİ', bg=self.BG, fg=C_ACC, font=(F_NUM, 13, 'bold')).pack(side='left', padx=(2, 2))
-        tk.Label(bar, text=f'v{VERSION}', bg=self.BG, fg=C_SUB, font=(F_UI, 8, 'bold')).pack(side='left', padx=(0, 14), pady=(6, 0))
+        # ---- Sol menü ----
+        side = tk.Frame(r, bg=C_SIDE, width=px(200)); side.pack(side='left', fill='y'); side.pack_propagate(False)
+        tk.Frame(r, bg=C_LINE, width=1).pack(side='left', fill='y')
+        head = tk.Frame(side, bg=C_SIDE); head.pack(fill='x', padx=18, pady=(18, 22))
+        tk.Label(head, text='PUBG', bg=C_SIDE, fg=C_ACC, font=(F_NUM, 22, 'bold')).pack(anchor='w')
+        tk.Label(head, text=f'İZLEYİCİ  ·  v{VERSION}', bg=C_SIDE, fg=C_SUB, font=(F_UI, 8, 'bold')).pack(anchor='w')
+        nav = tk.Frame(side, bg=C_SIDE); nav.pack(fill='x')
+        foot = tk.Frame(side, bg=C_SIDE); foot.pack(side='bottom', fill='x', padx=12, pady=(0, 14))
+
+        def sbtn(p, text, cmd, bg=C_SIDE, fg=C_TXT, over=C_CARD, font=(F_UI, 9, 'bold')):
+            return hover(tk.Button(p, text=text, command=cmd, bg=bg, fg=fg, relief='flat', bd=0, font=font, anchor='w',
+                                   padx=12, pady=6, cursor='hand2', activebackground=over, activeforeground=fg), over)
+
+        self.upd_side = tk.Label(foot, text='↻  Güncelleme kontrol ediliyor…', bg=C_SIDE, fg=C_SUB, font=(F_UI, 8),
+                                 anchor='w', justify='left', wraplength=px(170))
+        for txt, cmd in (('▣   Mini mod', self.toggle_mini), ('▶   PUBG\'yi başlat', self.launch_pubg),
+                         ('★   Yenilikler', self.show_changes)):
+            sbtn(foot, txt, cmd).pack(fill='x', pady=1)
+        tk.Frame(foot, bg=C_LINE, height=1).pack(fill='x', pady=10)
+        sbtn(foot, 'in   Talep / öneri bildir', lambda: os.startfile(LINKEDIN), bg='#0a66c2', fg='white',
+             over='#004182').pack(fill='x')
+        tk.Label(foot, text='Talep, öneri ve hataları LinkedIn\'den iletebilirsin.', bg=C_SIDE, fg=C_SUB, font=(F_UI, 8),
+                 anchor='w', justify='left', wraplength=px(170)).pack(fill='x', pady=(4, 10))
+        dev = tk.Label(foot, text=f'Geliştiren\n{DEV}  ↗', bg=C_SIDE, fg=C_SUB, font=(F_UI, 9, 'bold'), anchor='w',
+                       justify='left', cursor='hand2')
+        dev.pack(fill='x')
+        dev.bind('<Button-1>', lambda e: os.startfile(LINKEDIN))
+        dev.bind('<Enter>', lambda e: dev.config(fg=C_ACC)); dev.bind('<Leave>', lambda e: dev.config(fg=C_SUB))
+        self.upd_side.pack(fill='x', pady=(10, 0))
+
+        # ---- İçerik alanı ----
+        main = self.main = tk.Frame(r, bg=self.BG); main.pack(side='left', fill='both', expand=True)
         # Güncelleme bandı (yeni sürüm varsa görünür)
-        self.upd = tk.Frame(r, bg='#123247')
+        self.upd = tk.Frame(main, bg='#123247')
         self.upd_txt = tk.Label(self.upd, text='', bg='#123247', fg=C_TXT, font=(F_UI, 10, 'bold'), anchor='w', justify='left')
         self.upd_txt.pack(side='left', padx=12, pady=6, fill='x', expand=True)
         self.upd_btn = tk.Button(self.upd, text='Şimdi güncelle', command=self.apply_update, bg=C_ACC, fg='#0e1014', relief='flat',
                                  bd=0, font=(F_UI, 10, 'bold'), padx=14, pady=4, cursor='hand2')
         self.upd_new = None
         self.upd_info = None
-        hud = tk.Frame(r, bg=C_CARD, highlightthickness=1, highlightbackground=C_LINE)
-        hud.pack(side='bottom', fill='x', padx=12, pady=(0, 6))
+        hud = tk.Frame(main, bg=C_CARD, highlightthickness=1, highlightbackground=C_LINE)
+        hud.pack(side='bottom', fill='x', padx=12, pady=(0, 10))
         self.hud_fps = tk.Label(hud, text='— FPS', bg=C_CARD, fg=C_TXT, font=(F_NUM, 16, 'bold'), padx=12, pady=3)
         self.hud_fps.pack(side='left')
         self.hud_rest = tk.Label(hud, text='', bg=C_CARD, fg=C_SUB, font=(F_UI, 10, 'bold'), padx=4)
         self.hud_rest.pack(side='left')
-        for txt, cmd in (('▣  Mini mod', self.toggle_mini), ('▶  PUBG\'yi başlat', self.launch_pubg), ('★  Yenilikler', self.show_changes)):
-            hover(tk.Button(bar, text=txt, command=cmd, bg=C_CARD, fg=C_TXT, relief='flat', bd=0, font=(F_UI, 9, 'bold'),
-                            padx=9, pady=5, cursor='hand2', activebackground=C_LINE)).pack(side='right', padx=(4, 0))
         self.tabs = {}
-        self.f_live = tk.Frame(r, bg=self.BG)
-        self.f_set = tk.Frame(r, bg=self.BG)
-        self.f_info = tk.Frame(r, bg=self.BG)
-        self.f_an = tk.Frame(r, bg=self.BG)
-        self.f_acc = tk.Frame(r, bg=self.BG)
+        self.f_live = tk.Frame(main, bg=self.BG)
+        self.f_set = tk.Frame(main, bg=self.BG)
+        self.f_info = tk.Frame(main, bg=self.BG)
+        self.f_an = tk.Frame(main, bg=self.BG)
+        self.f_acc = tk.Frame(main, bg=self.BG)
+        self.cur = None
 
         def show(f):
             for x in (self.f_live, self.f_set, self.f_info, self.f_an, self.f_acc):
                 x.pack_forget()
-            f.pack(fill='both', expand=True)
-            for fr, b in self.tabs.items():
-                b.config(bg=C_ACC if fr is f else C_CARD, fg='#0e1014' if fr is f else C_TXT)
+            f.pack(fill='both', expand=True, pady=(8, 0))
+            self.cur = f
+            for fr, (ind, b) in self.tabs.items():
+                on = fr is f
+                ind.config(bg=C_ACC if on else C_SIDE)
+                b.config(bg=C_CARD if on else C_SIDE, fg=C_TXT if on else C_SUB)
+                b._base = b.cget('bg')
             if f is self.f_set and not self.set_done:
                 self.run_check()
             if f is self.f_info and not self.info_done:
@@ -1477,12 +1515,14 @@ class App:
                 self.ev_dirty = True
                 self.refresh_analysis()
 
-        for t, f in (('Canlı', self.f_live), ('Analiz', self.f_an), ('Ayar Kontrolü', self.f_set),
-                     ('Sistem Bilgisi', self.f_info), ('PUBG Hesap', self.f_acc)):
-            b = hover(tk.Button(bar, text=t, command=lambda f=f: show(f), bg=C_CARD, fg=C_TXT, relief='flat', bd=0,
-                                activebackground=C_ACC, font=(F_UI, 10, 'bold'), padx=11, pady=5, cursor='hand2'))
-            b.pack(side='left', padx=(0, 4))
-            self.tabs[f] = b
+        for t, f in (('◉   Canlı', self.f_live), ('◧   Analiz', self.f_an), ('◈   Ayar Kontrolü', self.f_set),
+                     ('▦   Sistem Bilgisi', self.f_info), ('◎   PUBG Hesap', self.f_acc)):
+            row = tk.Frame(nav, bg=C_SIDE); row.pack(fill='x', pady=1)
+            ind = tk.Frame(row, bg=C_SIDE, width=px(4)); ind.pack(side='left', fill='y')
+            b = sbtn(row, t, lambda f=f: show(f), fg=C_SUB, font=(F_UI, 11, 'bold'))
+            b.config(pady=9, padx=16)
+            b.pack(side='left', fill='x', expand=True, padx=(0, 10))
+            self.tabs[f] = (ind, b)
         self.set_done = False
         self.info_done = False
 
@@ -1520,13 +1560,13 @@ class App:
 
         self.txt = textbox(self.f_set)
         bb = tk.Frame(self.f_set, bg=self.BG); bb.pack(fill='x', padx=12, pady=(0, 8))
-        btn(bb, '⟳  Tekrar kontrol et', self.run_check).pack(side='left')
+        btn(bb, '↻  Tekrar kontrol et', self.run_check).pack(side='left')
         btn(bb, '✔  Önerilenleri uygula (yedek alır)', self.run_apply, '#1f4d3a').pack(side='right')
         # Sistem bilgisi sekmesi
         self.itxt = textbox(self.f_info)
         ib = tk.Frame(self.f_info, bg=self.BG); ib.pack(fill='x', padx=12, pady=(0, 8))
-        btn(ib, '⟳  Yenile', self.run_info).pack(side='left')
-        btn(ib, '💾  Dosyaya kaydet', self.save_info).pack(side='right')
+        btn(ib, '↻  Yenile', self.run_info).pack(side='left')
+        btn(ib, '⤓  Dosyaya kaydet', self.save_info).pack(side='right')
         self.build_live()
         self.build_analysis()
         self.build_account()
@@ -1753,24 +1793,33 @@ class App:
 
     # ---------------- Analiz sekmesi ----------------
     # ---------------- Güncelleme ----------------
+    def side_status(self, text, col=C_SUB):
+        self.root.after(0, lambda: setl(self.upd_side, text=text, fg=col))
+
     def update_loop(self):
+        """Her açılışta hemen, sonra saatte bir yeni sürüm kontrol eder."""
         while True:
+            self.side_status('↻  Güncelleme kontrol ediliyor…')
             try:
                 info = check_update()
                 if info and (not self.upd_info or info['ver'] != self.upd_info['ver']):
                     self.upd_info = info
+                    self.side_status(f"⬇  v{info['ver']} indiriliyor…", C_ACC)
                     self.root.after(0, lambda: self.show_upd(f"⬇  Yeni sürüm v{info['ver']} indiriliyor..."))
                     path = download_update(info, lambda f: self.root.after(0, lambda: self.show_upd(
                         f"⬇  Yeni sürüm v{info['ver']} indiriliyor... %{f * 100:.0f}")))
                     self.upd_new = path
+                    self.side_status(f"★  v{info['ver']} hazır, kuruluyor", C_ACC)
                     self.root.after(0, self.update_ready)
+                elif not info:
+                    self.side_status(f'✔  Güncel  ·  v{VERSION}\nson kontrol {datetime.datetime.now():%H:%M}', C_OK)
             except Exception:
-                pass
-            time.sleep(3600)  # açılışta ve saatte bir kontrol
+                self.side_status(f'⚠  Güncelleme kontrol edilemedi\n(internet?)  ·  v{VERSION}', C_WARN)
+            time.sleep(3600)
 
     def show_upd(self, text, button=False):
         if not self.upd.winfo_ismapped():
-            self.upd.pack(fill='x', padx=12, pady=(4, 0), after=self.root.winfo_children()[0])
+            self.upd.pack(fill='x', padx=12, pady=(10, 0), before=self.cur)
         setl(self.upd_txt, text=text)
         if button and not self.upd_btn.winfo_ismapped():
             self.upd_btn.pack(side='right', padx=10)
@@ -1791,7 +1840,7 @@ class App:
             self.show_upd('★  Güncelleme hazır. PUBG kapanınca otomatik kurulacak.', button=True)
             self.pending_update = True
             return
-        self.show_upd(f"⟳  v{self.upd_info['ver']} kuruluyor, program yeniden açılacak...")
+        self.show_upd(f"↻  v{self.upd_info['ver']} kuruluyor, program yeniden açılacak...")
         try:
             install_update(self.upd_new)
         except Exception as e:
@@ -1801,7 +1850,8 @@ class App:
 
     def show_changes(self, updated=False):
         w = tk.Toplevel(self.root)
-        w.title('Yenilikler'); w.configure(bg=C_BG); w.attributes('-topmost', True); w.geometry('620x460')
+        w.title('Yenilikler'); w.configure(bg=C_BG); w.attributes('-topmost', True); w.geometry(f'{px(620)}x{px(480)}')
+        style_window(w)
         tk.Label(w, text=(f'✔  v{VERSION} sürümüne güncellendi' if updated else f'PUBG İzleyici v{VERSION}'), bg=C_BG, fg=C_OK if updated else C_ACC,
                  font=(F_NUM, 15, 'bold')).pack(anchor='w', padx=16, pady=(14, 6))
         t = tk.Text(w, bg=C_CARD, fg=C_TXT, font=(F_UI, 10), relief='flat', wrap='word', padx=12, pady=10)
@@ -1813,8 +1863,14 @@ class App:
                 t.insert('end', f'  •  {it}\n')
             t.insert('end', '\n')
         t.config(state='disabled')
-        tk.Button(w, text='Tamam', command=w.destroy, bg=C_ACC, fg='#0e1014', relief='flat', bd=0, font=(F_UI, 10, 'bold'),
-                  padx=18, pady=4).pack(pady=(0, 12))
+        foot = tk.Frame(w, bg=C_BG); foot.pack(fill='x', padx=16, pady=(0, 12))
+        tk.Label(foot, text=f'Geliştiren: {DEV}', bg=C_BG, fg=C_SUB, font=(F_UI, 9, 'bold')).pack(side='left')
+        if LINKEDIN:
+            hover(tk.Button(foot, text='in  LinkedIn', command=lambda: os.startfile(LINKEDIN), bg='#0a66c2', fg='white',
+                            relief='flat', bd=0, font=(F_UI, 9, 'bold'), padx=12, pady=3, cursor='hand2',
+                            activebackground='#004182', activeforeground='white'), '#004182').pack(side='left', padx=10)
+        tk.Button(foot, text='Tamam', command=w.destroy, bg=C_ACC, fg='#0e1014', relief='flat', bd=0, font=(F_UI, 10, 'bold'),
+                  padx=18, pady=4).pack(side='right')
 
     def bg(self, work, done=None):
         """work() arka planda çalışır, sonucu done(sonuç) ile arayüz iş parçacığında işlenir. Pencere donmaz."""
