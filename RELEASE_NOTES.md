@@ -1,0 +1,9 @@
+- Çok daha akıcı: arayüz her saniye ~0.25 sn donuyordu, artık ~6 ms (yaklaşık 45 kat hızlı)
+- Ayar Kontrolü, Sistem Bilgisi ve ayar uygulama artık pencereyi dondurmuyor
+- Program anında açılıyor (FPS aracı arka planda hazırlanıyor)
+- Modern görünüm: koyu başlık çubuğu, yüksek DPI ekranlarda net yazılar, butonlarda vurgu
+- Güncelleme saatte bir kontrol ediliyor, indirilen dosya SHA-256 ile doğrulanıyor
+- Düzeltme: Türkçe karakterli kullanıcı klasörlerinde otomatik güncelleme çalışmıyordu
+- Düzeltme: DPI yazınca kayıtlı API anahtarı ve diğer ayarlar siliniyordu
+- Düzeltme: PUBG Hesap sekmesinde bazı hatalar hiç gösterilmiyordu
+- Uzun oturumlarda daha az bellek kullanımı
