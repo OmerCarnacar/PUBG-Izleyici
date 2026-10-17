@@ -20,12 +20,17 @@ S = 1.0  # ekran ölçeği (96 DPI = 1.0); pencere açılınca hesaplanır
 def px(v):
     return int(round(v * S))
 
-VERSION = '1.2.0'
+VERSION = '1.3.0'
 REPO = 'OmerCarnacar/PUBG-Izleyici'
 DEV = 'Ömer Çarnaçar'
 LINKEDIN = 'https://www.linkedin.com/in/omercarnacar'  # talep, öneri ve hata bildirimleri buradan
 # Her sürümde en üste eklenir; program güncellenince "Yenilikler" penceresinde gösterilir.
 CHANGES = [
+    ('1.3.0', [
+        'Yeni: Takım Sesi sekmesi — mikrofon, PUBG oyun içi ses ve Discord ayarları kontrol edilir; arka plan sesi gitmesin diye öneriler (Krisp, bas-konuş, AMD Noise Suppression, Stereo Karışımı uyarısı) ve tek tıkla uygulama',
+        "İşlemci sıcaklığı artık AMD Software (Adrenalin) ve Ryzen Master ile aynı: HWiNFO'nun CPU Tctl/Tdie değeri. HWiNFO kuruluysa program onu kendisi ayarlar ve arka planda başlatır",
+        "Core Temp sadece HWiNFO yoksa kullanılır (çekirdek sensörü, Tctl/Tdie'den birkaç derece düşük çıkabilir)",
+    ]),
     ('1.2.0', [
         'Yeni: Donanım Testi sekmesi — sensör kontrolü, işlemci stres ve ısıdan hız düşürme testi, RAM hız ve yaz-oku kontrolü, PUBG diskinde hız testi; sonuçlar önceki testle karşılaştırılır',
         "Ekran kartı sıcaklığı, yükü ve VRAM artık Windows'tan, Görev Yöneticisi ile aynı kaynaktan ve sadece oyunun çalıştığı karttan okunuyor",
@@ -1637,6 +1642,273 @@ def save_hwtests(h):
         pass
 
 
+# ---------------- Takım sesi: mikrofon, PUBG ve Discord ayarları ----------------
+class _GUID(ctypes.Structure):
+    _fields_ = [('a', ctypes.c_uint32), ('b', ctypes.c_uint16), ('c', ctypes.c_uint16), ('d', ctypes.c_ubyte * 8)]
+
+    def __init__(self, s):
+        super().__init__()
+        ctypes.oledll.ole32.CLSIDFromString(ctypes.c_wchar_p(s), ctypes.byref(self))
+
+
+def _com(obj, idx, *args, restype=ctypes.c_long, argtypes=()):
+    """COM arayüzünün vtable'ındaki idx. yöntemi çağırır (comtypes olmadan, saf ctypes)."""
+    vtbl = ctypes.cast(obj, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))).contents
+    fn = ctypes.WINFUNCTYPE(restype, ctypes.c_void_p, *argtypes)(vtbl[idx])
+    return fn(obj, *args)
+
+
+def mic_info():
+    """Varsayılan iletişim mikrofonu: {'name', 'id', 'vol' (0-100), 'mute'} ya da None. Windows Core Audio."""
+    ole = ctypes.windll.ole32
+    ole.CoInitializeEx(None, 0)  # COINIT_MULTITHREADED (iş parçacığında çağrılabilir)
+    enum = ctypes.c_void_p()
+    if ole.CoCreateInstance(ctypes.byref(_GUID('{BCDE0395-E52F-467C-8E3D-C4579291692E}')), None, 1,
+                            ctypes.byref(_GUID('{A95664D2-9614-4F35-A746-DE8DB63617E6}')), ctypes.byref(enum)):
+        return None
+    dev, vol = ctypes.c_void_p(), ctypes.c_void_p()
+    try:
+        # GetDefaultAudioEndpoint(eCapture=1, eCommunications=2): Discord ve oyunlar bunu kullanır
+        if _com(enum, 4, 1, 2, ctypes.byref(dev), argtypes=(ctypes.c_int, ctypes.c_int, ctypes.c_void_p)):
+            return None
+        pid = ctypes.c_wchar_p()
+        _com(dev, 5, ctypes.byref(pid), argtypes=(ctypes.c_void_p,))
+        did = pid.value or ''
+        ole.CoTaskMemFree(pid)
+        out = {'id': did, 'name': '', 'vol': None, 'mute': False}
+        if not _com(dev, 3, ctypes.byref(_GUID('{5CDF2C82-841E-4546-9722-0CF74078229A}')), 23, None, ctypes.byref(vol),
+                    argtypes=(ctypes.c_void_p, ctypes.c_uint32, ctypes.c_void_p, ctypes.c_void_p)):
+            lv, mu = ctypes.c_float(), ctypes.c_int()
+            if not _com(vol, 9, ctypes.byref(lv), argtypes=(ctypes.c_void_p,)):
+                out['vol'] = round(lv.value * 100)
+            if not _com(vol, 15, ctypes.byref(mu), argtypes=(ctypes.c_void_p,)):
+                out['mute'] = bool(mu.value)
+        g = did.rsplit('}.', 1)[-1].strip('{}')
+        if g:
+            k = rf'SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\{{{g}}}\Properties'
+            n1 = reg(winreg.HKEY_LOCAL_MACHINE, k, '{a45c254e-df1c-4efd-8020-67d146a850e0},2') or ''
+            n2 = reg(winreg.HKEY_LOCAL_MACHINE, k, '{b3f8fa53-0004-438e-9003-51a46e139bfc},6') or ''
+            out['name'] = f'{n1} ({n2})' if n2 else n1
+        return out
+    finally:
+        for o in (vol, dev, enum):
+            if o.value:
+                _com(o, 2)  # Release
+
+
+def set_mic_volume(pct):
+    """Varsayılan iletişim mikrofonunun seviyesini ayarlar (0-100)."""
+    ole = ctypes.windll.ole32
+    ole.CoInitializeEx(None, 0)
+    enum, dev, vol = ctypes.c_void_p(), ctypes.c_void_p(), ctypes.c_void_p()
+    try:
+        if ole.CoCreateInstance(ctypes.byref(_GUID('{BCDE0395-E52F-467C-8E3D-C4579291692E}')), None, 1,
+                                ctypes.byref(_GUID('{A95664D2-9614-4F35-A746-DE8DB63617E6}')), ctypes.byref(enum)):
+            return False
+        if _com(enum, 4, 1, 2, ctypes.byref(dev), argtypes=(ctypes.c_int, ctypes.c_int, ctypes.c_void_p)):
+            return False
+        if _com(dev, 3, ctypes.byref(_GUID('{5CDF2C82-841E-4546-9722-0CF74078229A}')), 23, None, ctypes.byref(vol),
+                argtypes=(ctypes.c_void_p, ctypes.c_uint32, ctypes.c_void_p, ctypes.c_void_p)):
+            return False
+        return _com(vol, 7, ctypes.c_float(pct / 100), None, argtypes=(ctypes.c_float, ctypes.c_void_p)) == 0
+    finally:
+        for o in (vol, dev, enum):
+            if o.value:
+                _com(o, 2)
+
+
+def capture_devices():
+    """Açık (etkin) kayıt aygıtlarının adları."""
+    out = []
+    base = r'SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture'
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, base) as k:
+            for i in range(winreg.QueryInfoKey(k)[0]):
+                sub = winreg.EnumKey(k, i)
+                st = reg(winreg.HKEY_LOCAL_MACHINE, f'{base}\\{sub}', 'DeviceState')
+                if st is None or (st & 0xF) != 1:  # DEVICE_STATE_ACTIVE
+                    continue
+                p = f'{base}\\{sub}\\Properties'
+                n1 = reg(winreg.HKEY_LOCAL_MACHINE, p, '{a45c254e-df1c-4efd-8020-67d146a850e0},2') or ''
+                n2 = reg(winreg.HKEY_LOCAL_MACHINE, p, '{b3f8fa53-0004-438e-9003-51a46e139bfc},6') or ''
+                out.append(f'{n1} ({n2})' if n2 else n1)
+    except OSError:
+        pass
+    return out
+
+
+def discord_voice():
+    """Discord'un ses ayarları (yerel depodaki MediaEngineStore), Discord yoksa None, okunamazsa {}."""
+    found = None
+    for app in ('discord', 'discordptb', 'discordcanary'):
+        d = os.path.join(os.environ.get('APPDATA', ''), app, 'Local Storage', 'leveldb')
+        if os.path.isdir(d):
+            found = found or {}
+            for f in sorted(glob.glob(os.path.join(d, '*.log')) + glob.glob(os.path.join(d, '*.ldb')),
+                            key=os.path.getmtime, reverse=True):
+                try:
+                    with open(f, 'rb') as fh:
+                        b = fh.read()
+                except OSError:
+                    continue
+                for m in reversed(list(re.finditer(rb'MediaEngineStore', b))):
+                    i = b.find(b'{', m.end(), m.end() + 64)
+                    if i < 0:
+                        continue
+                    depth, j = 0, i
+                    while j < len(b) and j - i < 20000:  # süslü parantez eşleştirerek JSON'u çıkar
+                        c = b[j:j + 1]
+                        depth += c == b'{'
+                        depth -= c == b'}'
+                        j += 1
+                        if depth == 0:
+                            break
+                    try:
+                        js = json.loads(b[i:j].decode('utf-8', 'ignore'))
+                    except ValueError:
+                        continue
+                    st = js.get('default') if isinstance(js.get('default'), dict) else js
+                    if isinstance(st, dict) and ('mode' in st or 'noiseSuppression' in st):
+                        return st
+    return found
+
+
+def check_voice():
+    """(durum, ad, şu an, öneri, neden) satırları: mikrofon, PUBG sesli sohbet ve Discord."""
+    out = []
+    mi = None
+    try:
+        mi = mic_info()
+    except Exception:
+        pass
+    devs = capture_devices()
+    if not mi:
+        out.append(('bad', 'Mikrofon', 'bulunamadı', 'Mikrofon tak',
+                    'Windows\'ta varsayılan iletişim mikrofonu yok. Ses ayarları → Giriş kısmından mikrofonu seç.'))
+    else:
+        out.append(('info', 'Varsayılan iletişim mikrofonu', mi['name'] or mi['id'], '-',
+                    'Discord ve PUBG "Varsayılan" seçiliyse bu mikrofonu kullanır.'))
+        if mi['mute']:
+            out.append(('bad', 'Mikrofon sessizde', 'Evet', 'Hayır', 'Windows mikrofonu sessize almış, takım seni duymaz.'))
+        if mi['vol'] is not None:
+            v = mi['vol']
+            out.append(('ok' if 60 <= v <= 95 else 'warn', 'Mikrofon seviyesi (Windows)', f'%{v}', '%70 – %90',
+                        'Çok yüksekse klavye, fan ve oda sesi de gider; çok düşükse takım seni zor duyar.'))
+    mix = [x for x in devs if re.search(r'stereo|karışım|mix|what u hear', x, re.I)]
+    if mix:
+        out.append(('warn', 'Stereo Karışımı açık', ', '.join(mix), 'Kapalı',
+                    'Yanlışlıkla mikrofon olarak seçilirse oyunun ve bilgisayarın tüm sesi takıma gider. '
+                    'Ses ayarları → Tüm ses aygıtları → Stereo Karışımı → Devre dışı bırak.'))
+    ns = [x for x in devs if re.search(r'noise suppression|broadcast|krisp|nvidia|sonar|streaming audio', x, re.I)]
+    if ns:
+        on = mi and any(n.split(' (')[0] in (mi['name'] or '') for n in ns)
+        out.append(('ok' if on else 'warn', 'Gürültü engelleme aygıtı', ', '.join(ns), 'Mikrofon olarak bunu seç',
+                    'Bu sanal mikrofon klavye, fan ve oda sesini temizler.' + ('' if on else
+                    ' Şu an varsayılan değil: Discord ve PUBG\'de giriş aygıtı olarak bunu seç.')))
+    else:
+        amd = any('amd' in (g.get('name') or '').lower() or 'radeon' in (g.get('name') or '').lower() for g in HW.get('gpus') or [])
+        nv = any('nvidia' in (g.get('name') or '').lower() for g in HW.get('gpus') or [])
+        out.append(('info', 'Gürültü engelleme (sistem)', 'yok',
+                    'AMD Noise Suppression' if amd else ('NVIDIA Broadcast' if nv else 'Discord Krisp'),
+                    ('AMD Software → Ses ve Video → AMD Noise Suppression\'ı aç; sonra Discord/PUBG\'de "AMD Noise Suppression" '
+                     'mikrofonunu seç. PUBG\'nin kendi gürültü engellemesi yok, bu sayede oyun içi seste de arka plan gitmez.')
+                    if amd else ('Ücretsiz NVIDIA Broadcast\'i kur, gürültü kaldırmayı aç ve onun mikrofonunu seç.' if nv else
+                                 'Sadece Discord kullanıyorsan Discord\'un Krisp\'i yeterli.')))
+    priv = reg(winreg.HKEY_CURRENT_USER, r'Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone',
+               'Value')
+    priv2 = reg(winreg.HKEY_CURRENT_USER,
+                r'Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone\NonPackaged', 'Value')
+    if priv == 'Deny' or priv2 == 'Deny':
+        out.append(('bad', 'Mikrofon izni (Windows)', 'Kapalı', 'Açık',
+                    'Gizlilik ve güvenlik → Mikrofon → "Masaüstü uygulamalarının mikrofona erişmesine izin ver"i aç.'))
+
+    # PUBG
+    d = read_ini() or {}
+    if d:
+        ptt = d.get('bUsePushToTalk', 'False') == 'True'
+        out.append(('ok' if ptt else 'bad', 'PUBG: Bas-konuş', 'Açık' if ptt else 'Kapalı (sürekli açık mikrofon)', 'Açık',
+                    'Bas-konuş kapalıysa mikrofon sürekli açık kalır: klavye, ateş sesi, oda sesi takıma gider.'))
+        key = re.search(r'\(ActionName="PushToTalk",Keys=\(\(Key=(\w+)', open(INI, encoding='utf-8', errors='ignore').read()) \
+            if os.path.exists(INI) else None
+        if ptt:
+            out.append(('info', 'PUBG: Bas-konuş tuşu', key.group(1) if key else 'varsayılan', '-',
+                        'Fare yan tuşu ya da kolay ulaşılan bir tuş idealdir.'))
+        glob_v = d.get('bUseGlobalVoice', 'False') == 'True'
+        out.append(('ok' if not glob_v else 'warn', 'PUBG: Herkese açık ses kanalı', 'Açık' if glob_v else 'Kapalı', 'Kapalı',
+                    'Açıkken yakındaki düşmanların ve yabancıların sesi de gelir, takım konuşması karışır.'))
+        team = d.get('bUseTeamVoice', 'True') == 'True'
+        out.append(('ok' if team else 'info', 'PUBG: Takım ses kanalı', 'Açık' if team else 'Kapalı', 'Açık',
+                    'Discord kullanıyorsan kapatabilirsin; yoksa takım seni iki kez (yankılı) duyabilir.'))
+        if d.get('bIsVoiceInputMute') == 'True':
+            out.append(('bad', 'PUBG: Mikrofon sessizde', 'Evet', 'Hayır', 'Oyun içi mikrofon kapalı, takım seni duymaz.'))
+
+    # Discord
+    dv = discord_voice()
+    run = any((p.info['name'] or '').lower().startswith('discord') for p in psutil.process_iter(['name']))
+    if dv is None:
+        out.append(('info', 'Discord', 'kurulu değil', '-', 'Discord kullanınca ayarları burada kontrol edilir.'))
+    elif not dv:
+        out.append(('info', 'Discord ayarları', 'okunamadı', 'Elle kontrol et',
+                    'Discord → Kullanıcı Ayarları → Ses ve Görüntü: Gürültü Engelleme = Krisp, Yankı Engelleme açık, '
+                    'Giriş modu Bas-Konuş ya da Ses Etkinliği (otomatik hassasiyet kapalı, eşik ~ -50 dB).'))
+    else:
+        mode = dv.get('mode', '')
+        mo = dv.get('modeOptions') or {}
+        if mode == 'PUSH_TO_TALK':
+            out.append(('ok', 'Discord: Giriş modu', 'Bas-Konuş', '-', 'Arka plan sesi hiç gitmez.'))
+        else:
+            thr, auto = mo.get('threshold'), mo.get('autoThreshold', True)
+            good = (not auto) and thr is not None and thr >= -55
+            out.append(('ok' if good else 'warn', 'Discord: Giriş modu', 'Ses Etkinliği' + (' (otomatik hassasiyet)' if auto else
+                        f' (eşik {thr} dB)'), 'Bas-Konuş ya da eşik -50 dB',
+                        'Otomatik hassasiyet oyunda klavye ve ateş sesini de konuşma sanabilir. Otomatiği kapat, eşiği -50 dB '
+                        'civarına getir ya da Bas-Konuş kullan.'))
+        krisp = dv.get('noiseCancellation')
+        std = dv.get('noiseSuppression')
+        out.append(('ok' if krisp else 'bad', 'Discord: Gürültü engelleme', 'Krisp' if krisp else ('Standart' if std else 'Kapalı'),
+                    'Krisp', 'Krisp klavye, fan, köpek, oda sesini temizler; Discord kalitesinin asıl kaynağı budur.'))
+        if dv.get('echoCancellation') is False:
+            out.append(('warn', 'Discord: Yankı engelleme', 'Kapalı', 'Açık',
+                        'Kulaklık yerine hoparlör kullanıyorsan oyun sesi mikrofondan geri gider.'))
+        if dv.get('automaticGainControl') is False:
+            out.append(('info', 'Discord: Otomatik kazanç', 'Kapalı', 'Açık', 'Sesin bazen kısık bazen yüksek gidiyorsa aç.'))
+        iv = dv.get('inputVolume')
+        if isinstance(iv, (int, float)) and iv > 100:
+            out.append(('warn', 'Discord: Giriş seviyesi', f'%{iv:.0f}', '%100', '100\'ün üstü sesi bozar ve gürültüyü artırır.'))
+        if run and d and d.get('bUseTeamVoice', 'True') == 'True':
+            out.append(('info', 'Discord ve PUBG sesi birlikte açık', 'Evet', 'Birini kullan',
+                        'Takımla Discord\'dan konuşuyorsanız PUBG takım sesini kapatın: hem yankı hem çift ses olmaz.'))
+    return out
+
+
+def apply_voice():
+    """Güvenli olanları uygular: PUBG bas-konuş ve herkese açık kanal (oyun kapalıyken), mikrofon seviyesi."""
+    msgs = []
+    if any((p.info['name'] or '').lower() == GAME.lower() for p in psutil.process_iter(['name'])):
+        msgs.append('PUBG açık: oyun içi ses ayarları oyun kapanınca uygulanabilir (oyun kapanırken eski ayarı yazar).')
+    elif os.path.exists(INI):
+        with open(INI, encoding='utf-8', errors='ignore', newline='') as f:
+            txt = f.read()
+        new = txt
+        for k, v in (('bUsePushToTalk', 'True'), ('bUseGlobalVoice', 'False'), ('bIsVoiceInputMute', 'False')):
+            new = re.sub(rf'(?m)^{k}=[^\r\n]*', f'{k}={v}', new)
+        if new != txt:
+            shutil.copy2(INI, INI + f'.izleyici_yedek_{datetime.datetime.now():%Y%m%d_%H%M%S}')
+            with open(INI, 'w', encoding='utf-8', newline='') as f:
+                f.write(new)
+            msgs.append('PUBG: Bas-konuş açık, herkese açık kanal kapalı, mikrofon açık (yedek alındı)')
+    try:
+        mi = mic_info()
+        if mi and mi['vol'] is not None and not 60 <= mi['vol'] <= 95 and set_mic_volume(80):
+            msgs.append(f"Mikrofon seviyesi %{mi['vol']} → %80")
+    except Exception:
+        pass
+    if not msgs:
+        msgs.append('Uygulanacak bir şey yoktu.')
+    msgs.append('Discord ayarları dışarıdan değiştirilemez: yukarıdaki önerileri Discord → Ses ve Görüntü\'den yap.')
+    return msgs
+
+
 # ---------------- Modern arayüz parçaları ----------------
 C_BG, C_CARD, C_LINE = '#0e1014', '#181b22', '#262b36'
 C_SIDE = '#0a0c10'  # sol menü
@@ -1838,15 +2110,57 @@ class Bar:
 NATIVE_GPU_OK = [False]
 
 
+HWINFO_EXE = [r'C:\Program Files\HWiNFO64\HWiNFO64.EXE', r'C:\Program Files\HWiNFO\HWiNFO64.EXE']
+
+
+def hwinfo_prepare():
+    """HWiNFO kuruluysa ayarlarında paylaşılan belleği açar (programın sıcaklığı okuyabilmesi için) ve
+    sadece sensör penceresiyle, küçültülmüş, karşılama ekranı olmadan açılmasını sağlar. Kurulu exe'yi döner."""
+    exe = next((x for x in HWINFO_EXE if os.path.exists(x)), None)
+    if not exe:
+        return None
+    ini = os.path.join(os.path.dirname(exe), 'HWiNFO64.INI')
+    want = {'SensorsOnly': '1', 'SensorsSM': '1', 'ShowWelcomeAndProgress': '0', 'MinimalizeSensors': '1',
+            'MinimalizeMainWnd': '1'}
+    try:
+        try:
+            with open(ini, encoding='latin-1') as f:
+                lines = f.read().splitlines()
+        except OSError:
+            lines = ['[Settings]']
+        have = {ln.split('=', 1)[0]: i for i, ln in enumerate(lines) if '=' in ln}
+        changed = False
+        for k, v in want.items():
+            if k in have:
+                if lines[have[k]] != f'{k}={v}':
+                    lines[have[k]] = f'{k}={v}'; changed = True
+            else:
+                lines.append(f'{k}={v}'); changed = True
+        if changed:
+            with open(ini, 'w', encoding='latin-1') as f:
+                f.write('\r\n'.join(lines) + '\r\n')
+    except OSError:
+        pass  # yazılamadıysa (yönetici değil) HWiNFO yine açılır, kullanıcı ayarı kendisi açabilir
+    return exe
+
+
 def start_sensor_apps():
-    """Core Temp ve GPU-Z kuruluysa (ya da exe'nin yanındaysa) kapalıysa başlatır."""
+    """Sıcaklık için HWiNFO (varsa, Adrenalin ile aynı Tctl/Tdie değeri) ya da Core Temp'i; ekran kartı ayrıntıları
+    için GPU-Z'yi kuruluysa ve kapalıysa arka planda başlatır."""
     names = {(p.info['name'] or '').lower() for p in psutil.process_iter(['name'])}
-    apps = [('core temp.exe', [r'C:\Program Files\Core Temp\Core Temp.exe', r'C:\Program Files (x86)\Core Temp\Core Temp.exe',
-                               os.path.join(DIR, 'Core Temp.exe')], []),
-            ('gpu-z.exe', [r'C:\Program Files (x86)\GPU-Z\GPU-Z.exe', r'C:\Program Files\GPU-Z\GPU-Z.exe'] +
-             glob.glob(os.path.join(DIR, 'GPU-Z*.exe')), ['-minimized'])]
-    if NATIVE_GPU_OK[0]:
-        apps = apps[:1]  # ekran kartı sürücüden okunuyor, GPU-Z gerekmez
+    hw = hwinfo_prepare()
+    if hw and 'hwinfo64.exe' not in names:
+        try:
+            subprocess.Popen([hw], cwd=os.path.dirname(hw))
+        except OSError:
+            hw = None
+    apps = []
+    if not hw:  # HWiNFO varsa Core Temp gerekmez
+        apps.append(('core temp.exe', [r'C:\Program Files\Core Temp\Core Temp.exe', r'C:\Program Files (x86)\Core Temp\Core Temp.exe',
+                                       os.path.join(DIR, 'Core Temp.exe')], []))
+    if not NATIVE_GPU_OK[0]:  # ekran kartı sürücüden okunamıyorsa hot spot/saat/güç için GPU-Z
+        apps.append(('gpu-z.exe', [r'C:\Program Files (x86)\GPU-Z\GPU-Z.exe', r'C:\Program Files\GPU-Z\GPU-Z.exe'] +
+                     glob.glob(os.path.join(DIR, 'GPU-Z*.exe')), ['-minimized']))
     si = subprocess.STARTUPINFO()
     si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
     si.wShowWindow = 0  # SW_HIDE: pencere görünmez, arka planda ölçer
@@ -1957,10 +2271,11 @@ class App:
         self.f_an = tk.Frame(main, bg=self.BG)
         self.f_acc = tk.Frame(main, bg=self.BG)
         self.f_hw = tk.Frame(main, bg=self.BG)
+        self.f_vc = tk.Frame(main, bg=self.BG)
         self.cur = None
 
         def show(f):
-            for x in (self.f_live, self.f_set, self.f_info, self.f_an, self.f_acc, self.f_hw):
+            for x in (self.f_live, self.f_set, self.f_info, self.f_an, self.f_acc, self.f_hw, self.f_vc):
                 x.pack_forget()
             f.pack(fill='both', expand=True, pady=(8, 0))
             self.cur = f
@@ -1973,12 +2288,14 @@ class App:
                 self.run_check()
             if f is self.f_info and not self.info_done:
                 self.run_info()
+            if f is self.f_vc and not self.vc_done:
+                self.run_voice()
             if f is self.f_an:
                 self.ev_dirty = True
                 self.refresh_analysis()
 
         for t, f in (('◉   Canlı', self.f_live), ('◧   Analiz', self.f_an), ('◈   Ayar Kontrolü', self.f_set),
-                     ('▦   Sistem Bilgisi', self.f_info), ('⚡   Donanım Testi', self.f_hw),
+                     ('▦   Sistem Bilgisi', self.f_info), ('⚡   Donanım Testi', self.f_hw), ('♪   Takım Sesi', self.f_vc),
                      ('◎   PUBG Hesap', self.f_acc)):
             row = tk.Frame(nav, bg=C_SIDE); row.pack(fill='x', pady=1)
             ind = tk.Frame(row, bg=C_SIDE, width=px(4)); ind.pack(side='left', fill='y')
@@ -2034,6 +2351,7 @@ class App:
         self.build_analysis()
         self.build_account()
         self.build_hwtest()
+        self.build_voice()
         show(self.f_live)
         threading.Thread(target=load_hw, daemon=True).start()
         threading.Thread(target=self.prepare_presentmon, daemon=True).start()
@@ -2097,9 +2415,9 @@ class App:
         self.v_ccnt = T(info, '', 9, C_SUB); self.v_ccnt.pack(anchor='w')
         self.core_box = tk.Frame(f, bg=C_CARD); self.core_box.pack(fill='x', padx=12, pady=(2, 10))
         # Core Temp yoksa işlemci sıcaklığı okunamaz (Windows bunu vermez); tıklanabilir ipucu
-        self.v_ct = T(f, 'İşlemci sıcaklığı için ücretsiz Core Temp gerekli: indirmek için tıkla ↗', 9, C_WARN)
+        self.v_ct = T(f, 'İşlemci sıcaklığı için ücretsiz HWiNFO gerekli (AMD Software ile aynı değeri verir): indirmek için tıkla ↗', 9, C_WARN)
         self.v_ct.config(cursor='hand2')
-        self.v_ct.bind('<Button-1>', lambda e: os.startfile('https://www.alcpu.com/CoreTemp/'))
+        self.v_ct.bind('<Button-1>', lambda e: os.startfile('https://www.hwinfo.com/download/'))
         self.core_w = []
 
         # GPU
@@ -2168,7 +2486,7 @@ class App:
             setl(self.v_cpuname, text=c.get('name', ''))
         self.g_cpu.warn, self.g_cpu.bad = LIM['hot'] - 7, LIM['hot']
         no_ct = not v['cpu_t'] and self.tick_n > 8  # birkaç saniye sonra hâlâ yoksa Core Temp çalışmıyor
-        self.g_cpu.set(v['cpu_t'] or None, '' if v['cpu_t'] else ('Core Temp yok' if no_ct else 'sensör başlıyor'))
+        self.g_cpu.set(v['cpu_t'] or None, '' if v['cpu_t'] else ('sensör yok' if no_ct else 'sensör başlıyor'))
         if no_ct != (self.v_ct.winfo_manager() == 'pack'):
             self.v_ct.pack(anchor='w', padx=12, pady=(0, 8)) if no_ct else self.v_ct.pack_forget()
         self.g_cpul.set(v['cpu_tot'] or 0.1)
@@ -2521,6 +2839,64 @@ class App:
             w.bind('<Double-Button-1>', lambda e: self.toggle_mini())
         self.root.withdraw()
 
+    # ---------------- Takım sesi sekmesi ----------------
+    def build_voice(self):
+        A = self.f_vc
+        self.vc_done = False
+        tk.Label(A, text='Takım iletişimi: arka plan sesi gitmesin, Discord kalitesinde konuş', bg=C_BG, fg=C_TXT,
+                 font=(F_UI, 12, 'bold'), anchor='w').pack(fill='x', padx=12, pady=(10, 0))
+        tk.Label(A, text='Mikrofon, PUBG oyun içi ses ve Discord ayarları kontrol edilir. Sorunlu olanlar en üstte.',
+                 bg=C_BG, fg=C_SUB, font=(F_UI, 9), anchor='w').pack(fill='x', padx=12, pady=(0, 4))
+        t = self.vtxt = tk.Text(A, bg=C_CARD, fg=C_TXT, font=(F_UI, 10), wrap='word', relief='flat', padx=12, pady=8,
+                                highlightthickness=1, highlightbackground=C_LINE, highlightcolor=C_LINE)
+        t.pack(fill='both', expand=True, padx=12, pady=(4, 4))
+        for tag, col in (('ok', C_OK), ('warn', C_WARN), ('bad', C_BAD), ('info', C_ACC), ('dim', C_SUB), ('h', C_TXT)):
+            t.tag_config(tag, foreground=col)
+        t.tag_config('h', font=(F_UI, 11, 'bold'))
+        bb = tk.Frame(A, bg=C_BG); bb.pack(fill='x', padx=12, pady=(0, 8))
+        mk = lambda txt, cmd, bg=C_CARD: hover(tk.Button(bb, text=txt, command=cmd, bg=bg, fg=C_TXT, relief='flat', bd=0,
+                                                         font=(F_UI, 10, 'bold'), padx=14, pady=6, cursor='hand2',
+                                                         activebackground=C_LINE, activeforeground=C_TXT))
+        mk('↻  Tekrar kontrol et', self.run_voice).pack(side='left')
+        mk('⚙  Windows ses ayarları', lambda: os.startfile('ms-settings:sound')).pack(side='left', padx=6)
+        mk('✔  Önerilenleri uygula', self.apply_voice_ui, '#1f4d3a').pack(side='right')
+
+    def run_voice(self, then=None):
+        if getattr(self, 'vc_busy', False):
+            return
+        self.vc_busy = True
+        self._fill(self.vtxt, [('Kontrol ediliyor...\n', 'dim')])
+
+        def work():
+            rows = check_voice()
+            pub = [r for r in rows if r[1].startswith('PUBG')]
+            dis = [r for r in rows if r[1].startswith('Discord')]
+            mic = [r for r in rows if r not in pub and r not in dis]
+            return [('MİKROFON (WINDOWS)', mic), ('PUBG OYUN İÇİ SES', pub), ('DISCORD', dis)]
+
+        def done(groups, err):
+            self.vc_busy = False
+            if err:
+                self._fill(self.vtxt, [(f'Hata: {err}\n', 'bad')]); return
+            self.show_check([g for g in groups if g[1]], self.vtxt)
+            self.vc_done = True
+            if then:
+                then()
+        self.bg(work, done)
+
+    def apply_voice_ui(self):
+        def done(msgs, err):
+            if err:
+                self._fill(self.vtxt, [(f'Uygulanamadı: {err}\n', 'bad')]); return
+
+            def show():
+                t = self.vtxt
+                t.config(state='normal')
+                t.insert('1.0', 'UYGULANDI:\n' + '\n'.join('• ' + m for m in msgs) + '\n\n', 'info')
+                t.config(state='disabled')
+            self.run_voice(then=show)
+        self.bg(apply_voice, done)
+
     # ---------------- Donanım testi sekmesi ----------------
     def build_hwtest(self):
         A = self.f_hw
@@ -2574,12 +2950,17 @@ class App:
                 R.append((f'    {note}\n', 'dim'))
         R.append(('\n— SENSÖR KONTROLÜ —\n', 'h'))
         if v['cpu_src']:
-            row('ok' if 20 <= v['cpu_t'] <= 105 else 'warn', 'İşlemci sıcaklığı', f"{v['cpu_t']}°C  ({v['cpu_src']})",
-                '' if 20 <= v['cpu_t'] <= 105 else 'Değer olağan dışı, kaynağı kontrol et.')
+            hwi = v['cpu_src'] == 'HWiNFO'
+            row('ok' if 20 <= v['cpu_t'] <= 105 else 'warn', 'İşlemci sıcaklığı',
+                f"{v['cpu_t']}°C  ({'HWiNFO, CPU Tctl/Tdie' if hwi else 'Core Temp, en sıcak çekirdek'})",
+                ('AMD Software (Adrenalin) ve Ryzen Master ile aynı ölçüm.' if hwi else
+                 'Çekirdek sensörü: AMD Software\'in gösterdiği Tctl/Tdie değerinden birkaç derece düşük olabilir. '
+                 'Aynı değeri görmek için ücretsiz HWiNFO\'yu kur, program kendisi ayarlar ve başlatır.')
+                if 20 <= v['cpu_t'] <= 105 else 'Değer olağan dışı, kaynağı kontrol et.')
         else:
             row('bad', 'İşlemci sıcaklığı', 'okunamıyor',
-                'Windows işlemci sıcaklığını vermez. Ücretsiz Core Temp\'i kur (program kendisi başlatır) ya da HWiNFO\'da '
-                '"Shared Memory Support"u aç.')
+                'Windows işlemci sıcaklığını vermez. Ücretsiz HWiNFO\'yu kur (hwinfo.com); program onu kendisi ayarlar ve '
+                'arka planda başlatır.')
         row('ok', 'İşlemci yükü', f"%{v['cpu_tot']}  ({v['load_src']})",
             'Görev Yöneticisi ile aynı sayaç.' if v['load_src'] == 'Windows sayacı' else '')
         row('ok' if v['cpu_mhz'] else 'warn', 'İşlemci hızı', f"{v['cpu_mhz']} MHz  ({v['mhz_src'] or 'yok'})" if v['cpu_mhz'] else 'okunamıyor')
@@ -2627,7 +3008,7 @@ class App:
 
         def sample():
             cpdh.read()
-            cs = cpu_sensor() or hwinfo_cpu() or {}
+            cs = hwinfo_cpu() or cpu_sensor() or {}
             return {'T': cs.get('T', 0), 'MHz': cs.get('MHz') or cpdh.mhz()}
 
         def ui(fn):
@@ -2959,8 +3340,9 @@ class App:
                 then()
         self.bg(work, done)
 
-    def show_check(self, groups):
-        t = self.txt
+    def show_check(self, groups, t=None):
+        main = t is None
+        t = t or self.txt
         t.config(state='normal'); t.delete('1.0', 'end')
         allr = [r for _, g in groups for r in g]
         bad = sum(1 for r in allr if r[0] in ('bad', 'warn'))
@@ -2977,7 +3359,8 @@ class App:
                     if s != 'ok':
                         t.insert('end', f'    {why}\n', 'dim')
         t.config(state='disabled')
-        self.set_done = True
+        if main:
+            self.set_done = True
 
     def run_apply(self):
         self._fill(self.txt, [('Ayarlar uygulanıyor...\n', 'dim')])
@@ -3070,7 +3453,12 @@ class App:
             cpu_tot = round(sum(per) / len(per)) if per else 0
         core_max = round(max(per)) if per else 0
         ram_free = round(psutil.virtual_memory().available / 1048576)
-        cpu = cpu_sensor() or hwinfo_cpu()  # Core Temp, yoksa HWiNFO
+        # İşlemci sıcaklığı: önce HWiNFO'nun "CPU (Tctl/Tdie)" değeri (AMD Software/Adrenalin ve Ryzen Master'ın
+        # gösterdiği değer), yoksa Core Temp'in en sıcak çekirdeği. İkisi farklı ölçümdür; Ryzen'de ~5°C fark olur.
+        hwc, ctc = hwinfo_cpu(), cpu_sensor()
+        if hwc and ctc:
+            hwc.update(TJ=ctc.get('TJ'), MHz=ctc.get('MHz'), Name=ctc.get('Name'))
+        cpu = hwc or ctc
         # Ekran kartı: ayrıntılar (hot spot, saat, güç) sürücüden ya da GPU-Z'den; sıcaklık, fan, yük ve VRAM
         # Windows'tan, oyunun çalıştığı kart için (Görev Yöneticisi ile birebir aynı).
         gpu = self.ngpu.read() if self.ngpu.kind else None

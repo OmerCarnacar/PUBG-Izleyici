@@ -1,6 +1,3 @@
-- Yeni: Donanım Testi sekmesi — sensör kontrolü, işlemci stres ve ısıdan hız düşürme testi, RAM hız ve yaz-oku kontrolü, PUBG diskinde hız testi; sonuçlar önceki testle karşılaştırılır
-- Ekran kartı sıcaklığı, yükü ve VRAM artık Windows'tan, Görev Yöneticisi ile aynı kaynaktan ve sadece oyunun çalıştığı karttan okunuyor
-- Düzeltme: işlemcisinde grafik birimi olan bilgisayarlarda (ör. Ryzen 7000/9000 + NVIDIA) yanlış kartın sıcaklığı/yükü gösteriliyordu
-- İşlemci yükü ve hızı Görev Yöneticisi'nin sayacından (eskisi ~10 puan düşük gösteriyordu)
-- İşlemci sıcaklığı için Core Temp yoksa HWiNFO da okunuyor; ikisi de yoksa indirme bağlantısı gösteriliyor
-- Düzeltme: çok çekirdekli işlemcilerde Canlı sekmesinde yazılar üst üste biniyordu; sekme artık kaydırılabilir, uyarılar en üstte
+- Yeni: Takım Sesi sekmesi — mikrofon, PUBG oyun içi ses ve Discord ayarları kontrol edilir; arka plan sesi gitmesin diye öneriler (Krisp, bas-konuş, AMD Noise Suppression, Stereo Karışımı uyarısı) ve tek tıkla uygulama
+- İşlemci sıcaklığı artık AMD Software (Adrenalin) ve Ryzen Master ile aynı: HWiNFO'nun CPU Tctl/Tdie değeri. HWiNFO kuruluysa program onu kendisi ayarlar ve arka planda başlatır
+- Core Temp sadece HWiNFO yoksa kullanılır (çekirdek sensörü, Tctl/Tdie'den birkaç derece düşük çıkabilir)
