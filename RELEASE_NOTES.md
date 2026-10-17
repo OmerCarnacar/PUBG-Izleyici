@@ -1,1 +1,6 @@
-- Düzeltme: program çöker ya da Görev Yöneticisi'nden kapatılırsa FPS ölçüm aracı (PresentMon) arka planda kalmıyor
+- Yeni: Donanım Testi sekmesi — sensör kontrolü, işlemci stres ve ısıdan hız düşürme testi, RAM hız ve yaz-oku kontrolü, PUBG diskinde hız testi; sonuçlar önceki testle karşılaştırılır
+- Ekran kartı sıcaklığı, yükü ve VRAM artık Windows'tan, Görev Yöneticisi ile aynı kaynaktan ve sadece oyunun çalıştığı karttan okunuyor
+- Düzeltme: işlemcisinde grafik birimi olan bilgisayarlarda (ör. Ryzen 7000/9000 + NVIDIA) yanlış kartın sıcaklığı/yükü gösteriliyordu
+- İşlemci yükü ve hızı Görev Yöneticisi'nin sayacından (eskisi ~10 puan düşük gösteriyordu)
+- İşlemci sıcaklığı için Core Temp yoksa HWiNFO da okunuyor; ikisi de yoksa indirme bağlantısı gösteriliyor
+- Düzeltme: çok çekirdekli işlemcilerde Canlı sekmesinde yazılar üst üste biniyordu; sekme artık kaydırılabilir, uyarılar en üstte
