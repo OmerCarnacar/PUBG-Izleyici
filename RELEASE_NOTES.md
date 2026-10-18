@@ -1,5 +1,4 @@
-- Yeni: Görev Yöneticisi sekmesi — Performans ekranının aynısı: CPU, Bellek, her disk, Ethernet/Wi-Fi ve GPU; 60 saniyelik grafikler, mantıksal işlemci grafikleri, GPU motorları (3D, Copy, Video Encode/Decode), aynı Windows sayaçları
-- Harici program yok: HWiNFO, Core Temp ve GPU-Z artık başlatılmıyor ve ayarlarına dokunulmuyor; her şey Windows'tan ve ekran kartı sürücüsünden okunuyor
-- Ekran kartı çekirdek ve bellek saati artık Windows'tan (Görev Yöneticisi ile aynı kaynak)
-- Daha az işlemci: pencere simge durumundayken ya da oyun öndeyken ekran çizilmiyor (ortalama %0.1); Görev Yöneticisi sekmesi sadece açıkken ölçüm yapıyor
-- Ana pencere artık 'her zaman üstte' değil: tam ekran oyunun özel modunu bozmasın (mini mod üstte kalır)
+- Yeni: İniş ve ölüm haritası — son 14 günün maçlarından her harita için iniş ve ölüm yerlerin, ısı katmanı, çatışma noktaları
+- Hangi bölgeye indiğinde daha iyi sonuç aldığın: en iyi ve kaçınman gereken iniş bölgeleri (ortalama sıra, ilk 10 oranı, erken ölüm)
+- Maç listesi: seni kim, hangi silahla öldürdü; maça tıklayınca haritada iniş yerine gider
+- Resmî PUBG API verisi, maç bittikten sonra: oyuna dokunmaz, ban riski yok. Maçlar bir kez indirilir, sonra saniyeler içinde açılır
