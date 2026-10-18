@@ -1,4 +1,1 @@
-- Yeni: İniş ve ölüm haritası — son 14 günün maçlarından her harita için iniş ve ölüm yerlerin, ısı katmanı, çatışma noktaları
-- Hangi bölgeye indiğinde daha iyi sonuç aldığın: en iyi ve kaçınman gereken iniş bölgeleri (ortalama sıra, ilk 10 oranı, erken ölüm)
-- Maç listesi: seni kim, hangi silahla öldürdü; maça tıklayınca haritada iniş yerine gider
-- Resmî PUBG API verisi, maç bittikten sonra: oyuna dokunmaz, ban riski yok. Maçlar bir kez indirilir, sonra saniyeler içinde açılır
+- Düzeltme: lobideki 60 FPS sınırı artık "İşlemci darboğazı" değil "Yok, FPS limitinde" olarak gösterilir

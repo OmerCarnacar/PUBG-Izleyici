@@ -20,12 +20,15 @@ S = 1.0  # ekran ölçeği (96 DPI = 1.0); pencere açılınca hesaplanır
 def px(v):
     return int(round(v * S))
 
-VERSION = '1.7.0'
+VERSION = '1.7.1'
 REPO = 'OmerCarnacar/PUBG-Izleyici'
 DEV = 'Ömer Çarnaçar'
 LINKEDIN = 'https://www.linkedin.com/in/omercarnacar'  # talep, öneri ve hata bildirimleri buradan
 # Her sürümde en üste eklenir; program güncellenince "Yenilikler" penceresinde gösterilir.
 CHANGES = [
+    ('1.7.1', [
+        'Düzeltme: lobideki 60 FPS sınırı artık "İşlemci darboğazı" değil "Yok, FPS limitinde" olarak gösterilir',
+    ]),
     ('1.7.0', [
         'Yeni: İniş ve ölüm haritası — son 14 günün maçlarından her harita için iniş ve ölüm yerlerin, ısı katmanı, çatışma noktaları',
         'Hangi bölgeye indiğinde daha iyi sonuç aldığın: en iyi ve kaçınman gereken iniş bölgeleri (ortalama sıra, ilk 10 oranı, erken ölüm)',
@@ -5388,7 +5391,8 @@ class App:
         # Darboğaz
         bound = '-'
         if ft:
-            if LIM['cap'] - 10 <= fps <= LIM['cap'] + 4:
+            # Oyun içi sınır ya da lobi sınırı (30/60 sabit): darboğaz yok, FPS bilerek sınırlanıyor
+            if LIM['cap'] - 10 <= fps <= LIM['cap'] + 4 or any(abs(fps - c) <= 2.5 for c in (30, 60)):
                 bound = 'Limit'
             elif ratio is not None:
                 bound = 'GPU' if ratio >= 0.9 else ('CPU' if ratio < 0.75 else 'Karışık')
