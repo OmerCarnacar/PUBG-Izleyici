@@ -1,4 +1,1 @@
-- Yeni: Maç sonu koç raporu — her maçın tekrarında Rapor sekmesi: sıra, hasar, isabet, kafa vuruşu, iniş, ilk çatışma, ölüm anı ve sebebi, silah tablosu, öneriler
-- Rapor, maçın anlarını bilgisayarının o anki performansıyla eşleştirir: ölümünden önceki 15 saniyedeki FPS, takılma ve ping; çatışmalardaki FPS; FPS grafiği
-- Program oyun sırasında her saniyenin performansını kaydeder (15 gün saklanır)
-- Oyun açıkken yeni maç bitince rapor kendiliğinden hazırlanır ve 'Maç raporu hazır' bandı çıkar (oyunu etkilememek için en düşük öncelikte, büyük harita indirmeden)
+- Düzeltme: HWiNFO kuruluyken program onu başlatamıyordu (Windows'un özel izin kuralı), Core Temp'e dönüyordu; artık HWiNFO açılıyor ve işlemci sıcaklığı AMD Software ile aynı gösteriliyor

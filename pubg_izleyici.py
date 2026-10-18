@@ -20,12 +20,15 @@ S = 1.0  # ekran ölçeği (96 DPI = 1.0); pencere açılınca hesaplanır
 def px(v):
     return int(round(v * S))
 
-VERSION = '1.5.0'
+VERSION = '1.5.1'
 REPO = 'OmerCarnacar/PUBG-Izleyici'
 DEV = 'Ömer Çarnaçar'
 LINKEDIN = 'https://www.linkedin.com/in/omercarnacar'  # talep, öneri ve hata bildirimleri buradan
 # Her sürümde en üste eklenir; program güncellenince "Yenilikler" penceresinde gösterilir.
 CHANGES = [
+    ('1.5.1', [
+        "Düzeltme: HWiNFO kuruluyken program onu başlatamıyordu (Windows'un özel izin kuralı), Core Temp'e dönüyordu; artık HWiNFO açılıyor ve işlemci sıcaklığı AMD Software ile aynı gösteriliyor",
+    ]),
     ('1.5.0', [
         'Yeni: Maç sonu koç raporu — her maçın tekrarında Rapor sekmesi: sıra, hasar, isabet, kafa vuruşu, iniş, ilk çatışma, ölüm anı ve sebebi, silah tablosu, öneriler',
         'Rapor, maçın anlarını bilgisayarının o anki performansıyla eşleştirir: ölümünden önceki 15 saniyedeki FPS, takılma ve ping; çatışmalardaki FPS; FPS grafiği',
@@ -3072,8 +3075,10 @@ def start_sensor_apps():
     names = {(p.info['name'] or '').lower() for p in psutil.process_iter(['name'])}
     hw = hwinfo_prepare()
     if hw and 'hwinfo64.exe' not in names:
+        # HWiNFO'nun bildirgesinde uiAccess="true" var: Windows böyle programları CreateProcess (subprocess) ile
+        # yönetici süreçten bile başlatmaz (hata 740); sadece ShellExecute (os.startfile) ile açılır.
         try:
-            subprocess.Popen([hw], cwd=os.path.dirname(hw))
+            os.startfile(hw)
         except OSError:
             hw = None
     apps = []
