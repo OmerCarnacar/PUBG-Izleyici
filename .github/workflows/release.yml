@@ -45,7 +45,7 @@ jobs:
         if: steps.v.outputs.skip != '1'
         shell: pwsh
         run: |
-          python -m pip install --disable-pip-version-check pyinstaller==6.22.3 psutil==7.2.2
+          python -m pip install --disable-pip-version-check pyinstaller==6.22.3 psutil==7.2.2 pillow==13.0.0
           gh release download $env:PRESENTMON -R GameTechDev/PresentMon --pattern 'PresentMon-*-x64.exe' -D pm
           $pm = (Get-ChildItem pm\PresentMon-*-x64.exe)[0].FullName
           pyinstaller --noconfirm --onefile --windowed --uac-admin --name PUBG_Izleyici --add-binary "$pm;." pubg_izleyici.py

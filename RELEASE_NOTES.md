@@ -1,4 +1,4 @@
-- Düzeltme: oyun içi FPS sınırı hiç uygulanmıyordu — program PUBG'nin tanımadığı bir değer yazıyordu ve oyun sınırsıza dönüyordu
-- Kenar yumuşatma önerisi Orta (profesyonellerin çoğu; Yüksek uzaktaki hedefi bulanıklaştırır)
-- Yeni öneri: lobi FPS sınırı 60 (lobide ekran kartı boşuna %100 çalışmasın)
-- Yeni öneri: efekt sesi %100 (ayak ve araç sesleri bu kanalda)
+- Yeni: Maç Tekrarı sekmesi (pubg.sh benzeri) — son maçlarını haritada oynat: tüm oyuncuların hareketi, mavi bölge / beyaz çember / kırmızı bölge, atış çizgileri, öldürme ve ölüm yerleri, kare paketler
+- Tekrar sayfası: yakınlaştırma, zaman çizelgesi (öldürme ve ölüm işaretli), 1x-80x hız, takım listesi, öldürme akışı, oyuncu takibi, kısayol tuşları
+- Resmî PUBG haritaları; yüksek çözünürlüklü harita bir kez indirilip döşemelere bölünür, yakınlaştırınca da keskin
+- Veriler resmî PUBG API'sinden, maç bittikten sonra: oyun sırasında hiçbir şey okunmaz, hile değildir
