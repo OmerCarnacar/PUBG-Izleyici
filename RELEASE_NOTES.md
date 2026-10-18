@@ -1,4 +1,4 @@
-- Yeni: Maç Tekrarı sekmesi (pubg.sh benzeri) — son maçlarını haritada oynat: tüm oyuncuların hareketi, mavi bölge / beyaz çember / kırmızı bölge, atış çizgileri, öldürme ve ölüm yerleri, kare paketler
-- Tekrar sayfası: yakınlaştırma, zaman çizelgesi (öldürme ve ölüm işaretli), 1x-80x hız, takım listesi, öldürme akışı, oyuncu takibi, kısayol tuşları
-- Resmî PUBG haritaları; yüksek çözünürlüklü harita bir kez indirilip döşemelere bölünür, yakınlaştırınca da keskin
-- Veriler resmî PUBG API'sinden, maç bittikten sonra: oyun sırasında hiçbir şey okunmaz, hile değildir
+- Yeni: Maç sonu koç raporu — her maçın tekrarında Rapor sekmesi: sıra, hasar, isabet, kafa vuruşu, iniş, ilk çatışma, ölüm anı ve sebebi, silah tablosu, öneriler
+- Rapor, maçın anlarını bilgisayarının o anki performansıyla eşleştirir: ölümünden önceki 15 saniyedeki FPS, takılma ve ping; çatışmalardaki FPS; FPS grafiği
+- Program oyun sırasında her saniyenin performansını kaydeder (15 gün saklanır)
+- Oyun açıkken yeni maç bitince rapor kendiliğinden hazırlanır ve 'Maç raporu hazır' bandı çıkar (oyunu etkilememek için en düşük öncelikte, büyük harita indirmeden)

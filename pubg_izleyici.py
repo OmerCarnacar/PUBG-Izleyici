@@ -20,12 +20,18 @@ S = 1.0  # ekran ölçeği (96 DPI = 1.0); pencere açılınca hesaplanır
 def px(v):
     return int(round(v * S))
 
-VERSION = '1.4.0'
+VERSION = '1.5.0'
 REPO = 'OmerCarnacar/PUBG-Izleyici'
 DEV = 'Ömer Çarnaçar'
 LINKEDIN = 'https://www.linkedin.com/in/omercarnacar'  # talep, öneri ve hata bildirimleri buradan
 # Her sürümde en üste eklenir; program güncellenince "Yenilikler" penceresinde gösterilir.
 CHANGES = [
+    ('1.5.0', [
+        'Yeni: Maç sonu koç raporu — her maçın tekrarında Rapor sekmesi: sıra, hasar, isabet, kafa vuruşu, iniş, ilk çatışma, ölüm anı ve sebebi, silah tablosu, öneriler',
+        'Rapor, maçın anlarını bilgisayarının o anki performansıyla eşleştirir: ölümünden önceki 15 saniyedeki FPS, takılma ve ping; çatışmalardaki FPS; FPS grafiği',
+        'Program oyun sırasında her saniyenin performansını kaydeder (15 gün saklanır)',
+        "Oyun açıkken yeni maç bitince rapor kendiliğinden hazırlanır ve 'Maç raporu hazır' bandı çıkar (oyunu etkilememek için en düşük öncelikte, büyük harita indirmeden)",
+    ]),
     ('1.4.0', [
         'Yeni: Maç Tekrarı sekmesi (pubg.sh benzeri) — son maçlarını haritada oynat: tüm oyuncuların hareketi, mavi bölge / beyaz çember / kırmızı bölge, atış çizgileri, öldürme ve ölüm yerleri, kare paketler',
         'Tekrar sayfası: yakınlaştırma, zaman çizelgesi (öldürme ve ölüm işaretli), 1x-80x hız, takım listesi, öldürme akışı, oyuncu takibi, kısayol tuşları',
@@ -2207,6 +2213,10 @@ def build_replay(m, progress=None):
     events = json.loads(http_bytes(m['tel'], 120, lambda f: pr('Telemetri indiriliyor…', 0.6 * f)))
     pr('Maç hesaplanıyor…', 0.65)
     data = replay_data(events, m)
+    try:
+        data['report'] = coach_report(events, m, data)  # maç sonu koç raporu
+    except Exception:
+        data['report'] = None
     del events
     img = MAP_INFO.get(m['map'], ('', 'Erangel_Main', 0))[1]
     pr('Harita hazırlanıyor…', 0.8)
@@ -2221,7 +2231,7 @@ def build_replay(m, progress=None):
     with open(out, 'w', encoding='utf-8') as f:
         f.write(html)
     pr('Hazır', 1)
-    return out, img, bool(tiles)
+    return out, img, bool(tiles), data.get('report')
 
 
 # Tekrar sayfası: Leaflet (harita) + tek tuval katmanı (oyuncular, bölgeler, atışlar) 60 fps çizilir.
@@ -2298,6 +2308,18 @@ footer{grid-column:1/3;display:flex;align-items:center;gap:14px;padding:0 18px;b
 #alive{color:var(--sub);white-space:nowrap}#alive b{color:var(--txt)}
 .leaflet-container{background:#0a0c0f;outline:0}
 .hint{color:var(--sub);font-size:11px;padding:8px 10px;border-top:1px solid var(--line)}
+.rgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:10px}
+.rc{background:var(--card2);border:1px solid var(--line);border-radius:10px;padding:8px 10px}
+.rc .v{font:700 18px "Bahnschrift","Segoe UI"}.rc .l{color:var(--sub);font-size:11px}
+.sec{font-weight:700;margin:12px 2px 6px;color:var(--txt)}
+.death{background:linear-gradient(135deg,rgba(255,92,92,.14),rgba(255,92,92,.04));border:1px solid rgba(255,92,92,.45);border-radius:10px;padding:10px;margin-bottom:8px}
+.death b{color:#ffb0b0}.death button{margin-top:8px;background:none;border:1px solid var(--line);color:var(--acc);border-radius:6px;padding:4px 10px;cursor:pointer;font:600 12px "Segoe UI"}
+.tipr{display:flex;gap:8px;padding:7px 8px;border-radius:8px;margin-bottom:4px;background:var(--card2)}
+.tipr .i{flex:none;font-weight:700}.tipr.bad .i{color:var(--bad)}.tipr.warn .i{color:var(--warn)}.tipr.info .i{color:var(--acc)}.tipr.good .i{color:var(--ok)}
+table.wt{width:100%;border-collapse:collapse;font-size:12px}table.wt td,table.wt th{padding:5px 6px;border-bottom:1px solid #20252e;text-align:right}
+table.wt th{color:var(--sub);font-weight:600}table.wt td:first-child,table.wt th:first-child{text-align:left}
+#chart{width:100%;height:120px;background:var(--card2);border:1px solid var(--line);border-radius:8px;cursor:pointer;display:block}
+.legend{color:var(--sub);font-size:11px;margin:4px 2px 0}.legend i{display:inline-block;width:10px;height:3px;margin:0 4px 2px 8px;vertical-align:middle}
 @media (max-width:900px){#app{grid-template-columns:1fr;grid-template-rows:56px 1fr 64px 240px}aside{grid-row:4;border-left:0;border-top:1px solid var(--line)}footer{grid-row:3}}
 </style>
 </head>
@@ -2329,8 +2351,9 @@ footer{grid-column:1/3;display:flex;align-items:center;gap:14px;padding:0 18px;b
     <div id="follow"></div>
   </div>
   <aside>
-    <div class="tabs"><button class="on" data-p="pTeams">Takımlar</button><button data-p="pKills">Öldürmeler</button></div>
-    <div class="pane on" id="pTeams"></div>
+    <div class="tabs"><button class="on" data-p="pRep">Rapor</button><button data-p="pTeams">Takımlar</button><button data-p="pKills">Öldürmeler</button></div>
+    <div class="pane on" id="pRep"></div>
+    <div class="pane" id="pTeams"></div>
     <div class="pane" id="pKills"></div>
     <div class="hint">Boşluk: oynat/durdur · ←/→: 10 sn · +/−: hız · oyuncuya tıkla: takip et</div>
   </aside>
@@ -2372,6 +2395,7 @@ $('chips').innerHTML = [`<span class="chip">${D.date}</span>`, D.myRank ? `<span
 const ticks = [];
 for (const k of D.kills) if (P[kidx[k.k]] && P[kidx[k.k]].team === D.myTeam) ticks.push(`<div class="tick" style="left:${k.t / D.dur * 100}%" title="${fmt(k.t)} ${k.k} → ${k.v}"></div>`);
 if (me.death != null) ticks.push(`<div class="tick die" style="left:${me.death / D.dur * 100}%" title="${fmt(me.death)} öldün"></div>`);
+if (D.report) for (const f of D.report.fights) ticks.push(`<div class="tick ph" style="left:${f[0] / D.dur * 100}%;background:#ffc845;opacity:.5"></div>`);
 for (const z of D.phases) ticks.push(`<div class="tick ph" style="left:${z / D.dur * 100}%"></div>`);
 $('ticks').innerHTML = ticks.join('');
 
@@ -2497,10 +2521,63 @@ $('mapwrap').addEventListener('mousemove', e => {
 });
 $('mapwrap').addEventListener('click', () => { if (hoverId) setFollow(hoverId); });
 
+// maç sonu raporu
+const RP = D.report;
+function renderReport() {
+  const el = $('pRep'); if (!RP) { el.innerHTML = '<div class="tipr info"><span class="i">i</span><span>Rapor yok.</span></div>'; return; }
+  const card = (v, l) => `<div class="rc"><div class="v">${v}</div><div class="l">${l}</div></div>`;
+  let h = '<div class="rgrid">' + card(RP.rank ? '#' + RP.rank : '—', 'Sıra') + card(RP.kills, 'Öldürme') + card(RP.dmg, 'Hasar') +
+    card(fmt(RP.alive), 'Hayatta kalma') + card(RP.acc == null ? '—' : '%' + Math.round(RP.acc), 'İsabet (yaklaşık)') + card(RP.hits ? '%' + RP.hsPct : '—', 'Kafa vuruşu') + '</div>';
+  if (RP.death) { const d = RP.death;
+    h += `<div class="death">Öldün: <b>${fmt(d.t)}</b> · ${d.by || '—'} · ${d.w}${d.d ? ' · ' + d.d + ' m' : ''}${d.hs ? ' · kafadan' : ''}` +
+      `${d.knocked_by && d.knocked_by !== d.by ? `<br><span style="color:var(--sub)">Seni düşüren: ${d.knocked_by}</span>` : ''}` +
+      `<br><button onclick="goTo(${d.t - 12}, true)">▶ Ölümünden 12 sn öncesini izle</button></div>`; }
+  const icon = {bad: '✖', warn: '⚠', info: 'ℹ'};
+  const tips = RP.tips.map(t => `<div class="tipr ${t[0]}"><span class="i">${icon[t[0]]}</span><span>${t[1]}</span></div>`).join('') +
+    RP.good.map(g => `<div class="tipr good"><span class="i">✔</span><span>${g}</span></div>`).join('');
+  h += '<div class="sec">Bulgular ve öneriler</div>' + (tips || '<div class="tipr good"><span class="i">✔</span><span>Belirgin bir sorun yok.</span></div>');
+  const extra = [];
+  if (RP.landing != null) extra.push(`İniş: ${RP.landName || 'isimsiz bölge'} · ${fmt(RP.landing)}${RP.enemiesNear ? ` · 150 m içinde ${RP.enemiesNear} düşman` : ''}`);
+  if (RP.firstFight != null) extra.push(`İlk çatışma: ${fmt(RP.firstFight)} · toplam ${RP.fights.length} çatışma`);
+  extra.push(`Atılan mermi ~${RP.fired} · isabet ${RP.hits} · düşürme ${RP.knocks} · iyileşme ${RP.heals}`);
+  extra.push(`Alınan hasar ${RP.dmgTaken}${RP.blueDmg ? ` (mavi bölge ${RP.blueDmg})` : ''}`);
+  h += '<div class="sec">Maç özeti</div>' + extra.map(x => `<div class="tipr"><span class="i" style="color:var(--sub)">•</span><span>${x}</span></div>`).join('');
+  if (RP.weapons.length) h += '<div class="sec">Silahlar</div><table class="wt"><tr><th>Silah</th><th>İsabet</th><th>Hasar</th><th>Kafa</th></tr>' +
+    RP.weapons.map(w => `<tr><td>${w.w}</td><td>${w.hits}</td><td>${Math.round(w.dmg)}</td><td>${w.hs}</td></tr>`).join('') + '</table>';
+  const P2 = RP.perf;
+  h += '<div class="sec">Bilgisayar performansı (bu maç)</div>';
+  if (P2) {
+    h += '<div class="rgrid">' + card(P2.avg, 'Ort. FPS') + card(P2.fightFps == null ? '—' : P2.fightFps, 'Çatışmada FPS') + card(P2.st, 'Takılma') +
+      card(P2.pingAvg + ' ms', 'Ort. ping') + card(P2.cpuMax ? P2.cpuMax + '°' : '—', 'En sıcak CPU') + card(P2.gpuMax ? P2.gpuMax + '°' : '—', 'En sıcak GPU') + '</div>' +
+      '<canvas id="chart"></canvas><div class="legend"><i style="background:#4cc2ff"></i>FPS<i style="background:rgba(255,200,69,.6);height:8px"></i>çatışma<i style="background:#ff5c5c"></i>takılma / ölüm · tıkla: o ana git</div>';
+    if (P2.beforeDeath) { const b = P2.beforeDeath;
+      h += `<div class="tipr ${b.st >= 2 || b.lossMax >= 5 ? 'bad' : 'info'}" style="margin-top:6px"><span class="i">◷</span><span>Ölümünden önceki 15 sn: en düşük FPS ${b.minFps}, ${b.st} takılma, en yüksek ping ${Math.round(b.pingMax)} ms${b.lossMax ? ', kayıp %' + Math.round(b.lossMax) : ''}</span></div>`; }
+  } else h += '<div class="tipr info"><span class="i">ℹ</span><span>Bu maçta program çalışmıyordu ya da eski sürümdü; performans kaydı yok. Sonraki maçlarda FPS, takılma ve ping çatışma ve ölüm anlarıyla eşleştirilecek.</span></div>';
+  el.innerHTML = h;
+  if (P2) drawChart();
+}
+function drawChart() {
+  const c = $('chart'); if (!c || !c.clientWidth) return;
+  const d = devicePixelRatio || 1, w = c.clientWidth, h = c.clientHeight; c.width = w * d; c.height = h * d;
+  const g = c.getContext('2d'); g.setTransform(d, 0, 0, d, 0, 0);
+  const S = RP.perf.series; if (!S.length) return;
+  const max = Math.max(...S.map(s => s[1])) * 1.1 || 1, X = t => t / D.dur * w, Y = f => h - 6 - f / max * (h - 16);
+  g.fillStyle = 'rgba(255,200,69,.18)'; for (const f of RP.fights) g.fillRect(X(f[0] - 2), 0, Math.max(3, X(f[1] + 2) - X(f[0] - 2)), h);
+  g.beginPath(); S.forEach((s, i) => i ? g.lineTo(X(s[0]), Y(s[1])) : g.moveTo(X(s[0]), Y(s[1])));
+  g.strokeStyle = '#4cc2ff'; g.lineWidth = 1.5; g.stroke();
+  g.fillStyle = '#ff5c5c'; for (const s of S) if (s[2]) g.fillRect(X(s[0]) - 1, h - 10, 2, 8);
+  if (RP.death) { g.fillStyle = '#ff5c5c'; g.fillRect(X(RP.death.t) - 1, 0, 2, h); }
+  g.fillStyle = 'rgba(255,255,255,.75)'; g.fillRect(X(T) - .5, 0, 1, h);
+  g.fillStyle = '#8b93a1'; g.font = '10px Segoe UI'; g.fillText(Math.round(max / 1.1) + ' FPS', 4, 11);
+  c.onclick = e => { const r = c.getBoundingClientRect(); seek((e.clientX - r.left) / w * D.dur); };
+}
+function goTo(t, focusMe) { seek(t); if (focusMe && P[D.me]) { const q = pos(P[D.me], Math.max(t, 0)); if (q) map.setView(ll(q[1], q[2]), Math.max(map.getZoom(), 4)); } }
+addEventListener('resize', () => { if (RP && RP.perf) drawChart(); });
 // oynatma
 const seekEl = $('seek');
 function seek(t) { T = Math.max(0, Math.min(D.dur, t)); ui(); draw(); side(); }
-function ui() { const f = T / D.dur; seekEl.value = Math.round(f * 1000); $('fill').style.width = f * 100 + '%'; $('knob').style.left = f * 100 + '%'; $('time').textContent = fmt(T) + ' / ' + fmt(D.dur); }
+let lastChart = 0;
+function ui() { const f = T / D.dur; if (RP && RP.perf && performance.now() - lastChart > 300) { lastChart = performance.now(); drawChart(); } seekEl.value = Math.round(f * 1000); $('fill').style.width = f * 100 + '%'; $('knob').style.left = f * 100 + '%'; $('time').textContent = fmt(T) + ' / ' + fmt(D.dur); }
 seekEl.oninput = () => seek(seekEl.value / 1000 * D.dur);
 $('play').onclick = () => { playing = !playing; if (playing && T >= D.dur) T = 0; $('play').textContent = playing ? '❚❚' : '▶'; };
 let last = performance.now();
@@ -2521,11 +2598,237 @@ addEventListener('keydown', e => {
   else if (e.key === '+' || e.key === '-') { const s = $('speed'), i = s.selectedIndex + (e.key === '+' ? 1 : -1); s.selectedIndex = Math.max(0, Math.min(s.options.length - 1, i)); }
 });
 // başlangıç: iniş anına git, benim takımı göster
-seek(D.start || 0); side(); requestAnimationFrame(frame);
+seek(D.start || 0); side(); renderReport(); requestAnimationFrame(frame);
 </script>
 </body>
 </html>
 '''
+
+
+# ---------------- Saniyelik performans kaydı + maç sonu koç raporu ----------------
+PERF = os.path.join(DATA, 'performans')
+
+
+class PerfLog:
+    """Oyun sırasında her saniyenin performansı, zaman damgasıyla (gün başına bir dosya, 15 gün saklanır).
+    Maç raporu bu kaydı maçın telemetrisindeki anlarla (çatışma, ölüm) eşleştirir."""
+    def __init__(self):
+        self.f, self.day = None, None
+        try:
+            os.makedirs(PERF, exist_ok=True)
+            cut = time.time() - 15 * 86400
+            for fn in glob.glob(os.path.join(PERF, '*.csv')):
+                if os.path.getmtime(fn) < cut:
+                    os.remove(fn)
+        except OSError:
+            pass
+
+    def write(self, row):
+        try:
+            day = time.strftime('%Y%m%d')
+            if day != self.day:
+                if self.f:
+                    self.f.close()
+                self.f = open(os.path.join(PERF, day + '.csv'), 'a', encoding='utf-8', buffering=1)
+                self.day = day
+            self.f.write(','.join('' if x is None else str(x) for x in row) + '\n')
+        except OSError:
+            pass
+
+    def close(self):
+        try:
+            if self.f:
+                self.f.close()
+        except OSError:
+            pass
+
+
+PERF_COLS = ('ts', 'fps', 'low1', 'st', 'ftmax', 'cpu_t', 'cpu', 'core', 'gpu_t', 'gpu', 'ping', 'loss', 'bound')
+
+
+def perf_rows(t_from, t_to):
+    """[t_from, t_to] (epoch sn) arasındaki saniyelik kayıtlar."""
+    out, d = [], datetime.date.fromtimestamp(t_from)
+    while d <= datetime.date.fromtimestamp(t_to):
+        try:
+            with open(os.path.join(PERF, d.strftime('%Y%m%d') + '.csv'), encoding='utf-8') as f:
+                for ln in f:
+                    p = ln.rstrip('\n').split(',')
+                    if len(p) < len(PERF_COLS):
+                        continue
+                    try:
+                        ts = float(p[0])
+                    except ValueError:
+                        continue
+                    if t_from <= ts <= t_to:
+                        r = {k: (num(v) if k != 'bound' else v) for k, v in zip(PERF_COLS, p)}
+                        out.append(r)
+        except OSError:
+            pass
+        d += datetime.timedelta(days=1)
+    return out
+
+
+def coach_report(events, m, data):
+    """Maç sonu raporu: maçın olayları + o anki bilgisayar performansı. Bulgular ve öneriler (seviye, metin)."""
+    aid = m['aid']
+    t0 = _ts(next(e['_D'] for e in events if e['_T'] == 'LogMatchStart'))
+    me = data['players'].get(aid) or {}
+    myteam = data.get('myTeam')
+    wn = weapon_names()
+    T = lambda e: _ts(e['_D']) - t0
+    shots, hits, hs, dmg, dmg_taken, blue_dmg, knocks, heals = {}, 0, 0, 0.0, 0.0, 0.0, 0, 0
+    by_w = {}
+    fights = []  # benim silahla hasar verdiğim/aldığım anlar
+    landing = land_name = None
+    death = None
+    knocked_by = None
+    for e in events:
+        typ = e['_T']
+        if landing is not None and land_name is None:  # iniş yerinin adı: inişten sonra bende görülen ilk bölge adı
+            for f in ('character', 'attacker', 'victim'):
+                c = e.get(f)
+                if isinstance(c, dict) and c.get('accountId') == aid and c.get('zone'):
+                    land_name = c['zone'][0].replace('_', ' ').title()
+                    break
+        if typ == 'LogWeaponFireCount' and e['character'].get('accountId') == aid:
+            shots[e['weaponId']] = max(shots.get(e['weaponId'], 0), e.get('fireCount', 0))
+        elif typ == 'LogPlayerTakeDamage':
+            a, v = e.get('attacker') or {}, e.get('victim') or {}
+            cat, d = e.get('damageTypeCategory', ''), e.get('damage') or 0
+            if a.get('accountId') == aid and v.get('teamId') != myteam and cat == 'Damage_Gun':
+                hits += 1; dmg += d; fights.append(T(e))
+                hs += e.get('damageReason') == 'HeadShot'
+                w = wn.get(e.get('damageCauserName'), e.get('damageCauserName', '?'))
+                b = by_w.setdefault(w, {'w': w, 'hits': 0, 'dmg': 0.0, 'hs': 0})
+                b['hits'] += 1; b['dmg'] += d; b['hs'] += e.get('damageReason') == 'HeadShot'
+            elif v.get('accountId') == aid:
+                dmg_taken += d
+                if cat == 'Damage_BlueZone':
+                    blue_dmg += d
+                elif cat == 'Damage_Gun':
+                    fights.append(T(e))
+        elif typ == 'LogPlayerMakeGroggy':
+            if (e.get('attacker') or {}).get('accountId') == aid:
+                knocks += 1
+            if (e.get('victim') or {}).get('accountId') == aid and knocked_by is None:
+                knocked_by = (e.get('attacker') or {}).get('name')
+        elif typ == 'LogItemUse' and e['character'].get('accountId') == aid and \
+                any(x in e['item'].get('itemId', '') for x in ('Heal', 'Boost', 'FirstAid', 'MedKit', 'Bandage')):
+            heals += 1
+        elif typ == 'LogParachuteLanding' and e['character'].get('accountId') == aid:
+            landing = T(e)
+        elif typ == 'LogPlayerKillV2' and (e.get('victim') or {}).get('accountId') == aid:
+            k = e.get('finisher') or e.get('killer') or {}
+            info = e.get('finishDamageInfo') or e.get('killerDamageInfo') or {}
+            cat = info.get('damageTypeCategory', '')
+            death = {'t': T(e), 'by': k.get('name') or '', 'w': 'Mavi bölge' if cat == 'Damage_BlueZone' else
+                     wn.get(info.get('damageCauserName'), info.get('damageCauserName', '?')),
+                     'd': round((info.get('distance') or 0) / 100), 'hs': info.get('damageReason') == 'HeadShot',
+                     'veh': bool((e.get('victim') or {}).get('isInVehicle')), 'knocked_by': knocked_by}
+    fired = sum(shots.values())
+    acc = round(100 * hits / max(fired, hits), 1) if fired or hits else None
+    # çatışmaları birleştir (10 sn içindeki vuruşlar aynı çatışma)
+    fights.sort()
+    fw = []
+    for t in fights:
+        if fw and t - fw[-1][1] <= 10:
+            fw[-1][1] = t
+        else:
+            fw.append([t, t])
+    alive = (death['t'] if death else data['dur'])
+    enemies_near = 0
+    if landing is not None and me.get('pos'):
+        lp = next((a for a in me['pos'] if a[0] >= landing), None)
+        if lp:  # iniş anında 150 m içinde düşman sayısı
+            size = MAP_INFO.get(m['map'], ('', '', 816000))[2]
+            r = 15000 / size
+            for i, p in data['players'].items():
+                if p['team'] == myteam:
+                    continue
+                q = next((a for a in p['pos'] if a[0] >= landing), None)
+                if q and abs(q[0] - landing) < 20 and (q[1] - lp[1]) ** 2 + (q[2] - lp[2]) ** 2 <= r * r:
+                    enemies_near += 1
+    rep = {'landing': landing, 'landName': land_name or '', 'enemiesNear': enemies_near, 'firstFight': fw[0][0] if fw else None,
+           'fights': fw, 'fired': fired, 'hits': hits, 'acc': acc, 'hs': hs, 'hsPct': round(100 * hs / hits) if hits else 0,
+           'dmg': round(m.get('dmg') or dmg), 'gunDmg': round(dmg), 'dmgTaken': round(dmg_taken), 'blueDmg': round(blue_dmg), 'knocks': knocks, 'heals': heals,
+           'kills': m.get('kills', 0), 'rank': m.get('rank'), 'alive': round(alive), 'death': death,
+           'weapons': sorted(by_w.values(), key=lambda b: -b['dmg'])[:5], 'perf': None, 'tips': [], 'good': []}
+
+    # performans kaydıyla eşleştir
+    rows = perf_rows(t0 - 5, t0 + data['dur'] + 5)
+    if len(rows) >= 30:
+        for r in rows:
+            r['t'] = r['ts'] - t0
+        fps = [r['fps'] for r in rows if r['fps']]
+        avg = sum(fps) / len(fps) if fps else 0
+
+        def win(a, b):
+            return [r for r in rows if a <= r['t'] <= b]
+        infight = [r for w in fw for r in win(w[0] - 2, w[1] + 2)]
+        ff = [r['fps'] for r in infight if r['fps']]
+        pd = {'avg': round(avg), 'low1': round(min(r['low1'] or avg for r in rows)), 'st': int(sum(r['st'] or 0 for r in rows)),
+              'fightFps': round(sum(ff) / len(ff)) if ff else None, 'fightSt': int(sum(r['st'] or 0 for r in infight)),
+              'cpuMax': max((r['cpu_t'] or 0) for r in rows), 'gpuMax': max((r['gpu_t'] or 0) for r in rows),
+              'pingAvg': round(sum(r['ping'] or 0 for r in rows) / len(rows)), 'pingMax': max((r['ping'] or 0) for r in rows),
+              'lossMax': max((r['loss'] or 0) for r in rows),
+              'series': [[round(r['t']), round(r['fps'] or 0), int(r['st'] or 0), round(r['ping'] or 0)] for r in rows[::2]]}
+        if death:
+            bd = win(death['t'] - 15, death['t'])
+            if bd:
+                pd['beforeDeath'] = {'minFps': round(min(r['fps'] or 0 for r in bd)), 'st': int(sum(r['st'] or 0 for r in bd)),
+                                     'pingMax': max(r['ping'] or 0 for r in bd), 'lossMax': max(r['loss'] or 0 for r in bd),
+                                     'cpuT': max(r['cpu_t'] or 0 for r in bd)}
+        rep['perf'] = pd
+
+    # öneriler (önce sorunlar, sonra iyi gidenler)
+    tip, good = rep['tips'].append, rep['good'].append
+    pdd = rep['perf']
+    if pdd and death and pdd.get('beforeDeath'):
+        b = pdd['beforeDeath']
+        if b['st'] >= 2 or (avg and b['minFps'] < avg * 0.6):
+            tip(('bad', f"Ölümünden önceki 15 saniyede {b['st']} takılma oldu, en düşük FPS {b['minFps']}. "
+                        + ('Sebep işlemci ısınması olabilir ({}°C).'.format(b['cpuT']) if b['cpuT'] >= LIM['hot'] else
+                           'Analiz sekmesindeki takılma kaydına bak.')))
+        if b['lossMax'] >= 5 or b['pingMax'] >= max(80, pdd['pingAvg'] * 2):
+            tip(('bad', f"Ölümünden önce ağ bozuldu: ping {b['pingMax']:.0f} ms" + (f", paket kaybı %{b['lossMax']:.0f}" if b['lossMax'] else '') + ". "
+                        'Oyunda geri ışınlanma ve gecikmeli vuruş yapar.'))
+    if pdd and pdd['fightFps'] and pdd['avg'] and pdd['fightFps'] < pdd['avg'] * 0.75:
+        tip(('warn', f"Çatışmalarda FPS ortalaması {pdd['fightFps']}, maç ortalaması {pdd['avg']}. Duman ve patlamalar FPS'yi "
+                     "düşürüyor: Efektler'i Çok Düşük tut."))
+    if pdd and pdd['fightSt'] >= 3:
+        tip(('warn', f"Çatışma anlarında toplam {pdd['fightSt']} takılma oldu."))
+    if rep['blueDmg'] >= 15:
+        tip(('warn', f"Mavi bölgeden {rep['blueDmg']} hasar aldın. Bir sonraki çemberin yerini erken düşün, araç bul."))
+    if death and landing is not None and death['t'] - landing < 180:
+        tip(('warn', f"İnişten {death['t'] - landing:.0f} saniye sonra öldün" +
+             (f" ({rep['enemiesNear']} düşman 150 m içine indi)" if rep['enemiesNear'] else '') +
+             '. Kalabalık inişlerde önce silah bulmaya odaklan ya da daha sakin bir yere in.'))
+    elif rep['enemiesNear'] >= 4:
+        tip(('info', f"İnişte 150 m içinde {rep['enemiesNear']} düşman vardı (sıcak iniş)."))
+    if death and death['d'] >= 150 and death['w'] != 'Mavi bölge':
+        tip(('info', f"{death['d']} m'den vuruldun ({death['w']}). Açık alanda koşarken siper ya da duman kullan."))
+    if death and death['veh']:
+        tip(('info', 'Araçtayken öldün: araçlar uzaktan kolay hedef olur, çatışma bölgesine yaklaşınca in.'))
+    if rep['acc'] is not None and rep['fired'] >= 40 and rep['acc'] < 15:
+        tip(('warn', f"İsabet oranın yaklaşık %{rep['acc']:.0f} ({rep['fired']} mermi). Uzun mesafede tek atış ya da kısa "
+                     "seri atış dene; Eğitim Modu'nda sekme kontrolü çalış."))
+    if not fw and death:
+        tip(('warn', 'Ölmeden önce hiç hasar veremedin: düşmanı ilk sen gör. Ses ayarların için Takım Sesi ve Ayar Kontrolü\'ne bak.'))
+    if rep['kills'] >= 3:
+        good(f"{rep['kills']} öldürme, {rep['dmg']} hasar.")
+    if rep['acc'] is not None and rep['fired'] >= 40 and rep['acc'] >= 30:
+        good(f"İsabet oranın yüksek: yaklaşık %{rep['acc']:.0f}.")
+    if rep['hits'] >= 10 and rep['hsPct'] >= 20:
+        good(f"Kafa vuruşu oranın %{rep['hsPct']}.")
+    if rep['rank'] and rep['rank'] <= 10:
+        good(f"İlk 10'a girdin (#{rep['rank']}).")
+    if pdd and pdd['st'] == 0:
+        good(f"Maç boyunca hiç takılma olmadı (ortalama {pdd['avg']} FPS).")
+    if not pdd:
+        tip(('info', 'Bu maçın performans kaydı yok (program kapalıydı ya da eski sürümdü). '
+                     'Sonraki maçlarda FPS, takılma ve ping çatışma/ölüm anlarıyla eşleştirilecek.'))
+    return rep
 
 
 # ---------------- Modern arayüz parçaları ----------------
@@ -2825,6 +3128,7 @@ class App:
         self.pending_update = False
         psutil.cpu_percent(percpu=True)
         self.csv = open(SEC_CSV, 'w', encoding='utf-8-sig', buffering=1)
+        self.perf = PerfLog()  # zaman damgalı saniyelik kayıt (maç raporu için)
         self.csv.write('Zaman,FPS,Low1,Takilma,CPU,MaxCekirdek,CPUSic,CPUMHz,GPUYuk,GPUSic,HotSpot,VRAMMB,RAMBosMB,GPUOrani,Darbogaz\n')
 
         r = self.root = tk.Tk()
@@ -2870,6 +3174,15 @@ class App:
         # ---- İçerik alanı ----
         main = self.main = tk.Frame(r, bg=self.BG); main.pack(side='left', fill='both', expand=True)
         # Güncelleme bandı (yeni sürüm varsa görünür)
+        self.rep_band = tk.Frame(main, bg='#1d2a1f', highlightthickness=1, highlightbackground='#2f5a3a')
+        self.rep_txt = tk.Label(self.rep_band, text='', bg='#1d2a1f', fg=C_TXT, font=(F_UI, 10, 'bold'), anchor='w', justify='left',
+                                wraplength=px(700))
+        self.rep_txt.pack(side='left', padx=12, pady=6, fill='x', expand=True)
+        tk.Button(self.rep_band, text='✕', command=lambda: self.rep_band.pack_forget(), bg='#1d2a1f', fg=C_SUB, relief='flat',
+                  bd=0, font=(F_UI, 10), cursor='hand2', activebackground='#1d2a1f').pack(side='right', padx=(0, 8))
+        self.rep_btn = hover(tk.Button(self.rep_band, text='▶  Raporu aç', bg=C_OK, fg='#0e1014', relief='flat', bd=0,
+                                       font=(F_UI, 10, 'bold'), padx=14, pady=4, cursor='hand2', activebackground='#6be9a4'), '#6be9a4')
+        self.rep_btn.pack(side='right', padx=8)
         self.upd = tk.Frame(main, bg='#123247')
         self.upd_txt = tk.Label(self.upd, text='', bg='#123247', fg=C_TXT, font=(F_UI, 10, 'bold'), anchor='w', justify='left')
         self.upd_txt.pack(side='left', padx=12, pady=6, fill='x', expand=True)
@@ -2981,6 +3294,7 @@ class App:
         threading.Thread(target=self.prepare_presentmon, daemon=True).start()
         NATIVE_GPU_OK[0] = bool(self.ngpu.kind)
         threading.Thread(target=self.update_loop, daemon=True).start()
+        threading.Thread(target=self.match_watch, daemon=True).start()  # maç bitince rapor
         c = load_cfg()
         if c.get('last_ver') and c.get('last_ver') != VERSION:
             r.after(1500, lambda: self.show_changes(updated=True))
@@ -3739,6 +4053,53 @@ class App:
                      'bad': 'Çok yavaş: eşya/harita yüklenirken takılma yapar.'}[st])
         return R
 
+    # ---------------- Maç bitince otomatik rapor ----------------
+    def match_watch(self):
+        """Oyun açıkken (ya da kapandıktan sonraki 15 dk) 2 dakikada bir son maçı sorar; yeni maç bittiyse raporunu
+        hazırlar. En düşük öncelikte çalışır, oyun sırasında büyük harita indirmez (pingi etkilemesin)."""
+        try:
+            k = ctypes.windll.kernel32
+            k.SetThreadPriority(k.GetCurrentThread(), -2)  # THREAD_PRIORITY_LOWEST
+        except Exception:
+            pass
+        seen = None
+        while True:
+            time.sleep(120)
+            c = load_cfg()
+            key = c.get('api')
+            if not key or not (self.game_pid or time.time() - getattr(self, 'game_end', 0) < 900):
+                continue
+            try:
+                aid, nm, ids = recent_matches(key, c.get('name', ''), 1)
+            except Exception:
+                continue
+            if not ids:
+                continue
+            if seen is None:  # ilk sorguda görülen maç, program açılmadan önce oynanmış: rapor gösterilmez
+                seen = ids[0]
+                continue
+            if ids[0] == seen:
+                continue
+            seen = ids[0]
+            try:
+                m = match_summary(ids[0], key, aid)
+                out, img, hd, rep = build_replay(m)
+            except Exception:
+                continue
+            self.root.after(0, lambda m=m, out=out, rep=rep: self.show_report_band(m, out, rep))
+
+    def show_report_band(self, m, out, rep):
+        mapn = MAP_INFO.get(m['map'], (m['map'],))[0]
+        top = ''
+        if rep:
+            t = next((x for x in rep['tips'] if x[0] in ('bad', 'warn')), None)
+            top = ('   ·   ' + t[1]) if t else (('   ·   ' + rep['good'][0]) if rep['good'] else '')
+        setl(self.rep_txt, text=f"★  Maç raporu hazır: #{m.get('rank') or '?'} {mapn} · {m.get('kills', 0)} öldürme · "
+                                f"{m.get('dmg', 0):.0f} hasar{top}"[:260])
+        self.rep_btn.config(command=lambda: os.startfile(out))
+        if not self.rep_band.winfo_ismapped():
+            self.rep_band.pack(fill='x', padx=12, pady=(10, 0), before=self.cur)
+
     # ---------------- Maç tekrarı sekmesi ----------------
     def build_replay_tab(self):
         A = self.f_rp
@@ -3839,7 +4200,7 @@ class App:
         want_hd = bool(self.v_hd.get())
 
         def work():
-            out, img, hd = build_replay(m, lambda txt, f=None: self.rp_status('⏳ ' + txt, f))
+            out, img, hd, _ = build_replay(m, lambda txt, f=None: self.rp_status('⏳ ' + txt, f))
             os.startfile(out)
             if want_hd and not hd:  # tekrar hemen açıldı; keskin harita arka planda hazırlanır, sonraki açılışta kullanılır
                 self.rp_status('Tekrar açıldı. Yüksek çözünürlüklü harita hazırlanıyor (bir kerelik)…', 0)
@@ -4161,6 +4522,7 @@ class App:
         if self.prev_game is None and not game:
             self.root.after(2500, self.auto_apply)
         elif self.prev_game and not game:
+            self.game_end = time.time()
             self.root.after(7000, self.auto_apply)
             if getattr(self, 'pending_update', False):
                 self.root.after(12000, self.apply_update)
@@ -4305,6 +4667,8 @@ class App:
             self.csv.write(','.join(map(str, [datetime.datetime.now().strftime('%H:%M:%S'), round(fps), round(low1), st,
                                            cpu_tot, core_max, cpu_t, cpu_mhz, g_load, g_t, hs, vram, ram_free,
                                            '' if ratio is None else f'{ratio:.2f}', bound])) + '\n')
+            self.perf.write([round(time.time(), 1), round(fps), round(low1), st, round(max(ft), 1), cpu_t, cpu_tot, core_max, g_t,
+                             g_load, n['ping'], n['loss'], bound])
 
         # Ekran
         self.render({'ft': ft, 'fps': fps, 'low1': low1, 'low01': low01, 'ftavg': (sum_ft / len(ft)) if ft else 0,
@@ -4461,6 +4825,7 @@ class App:
     def close(self, report=True):
         try:
             self.csv.close()
+            self.perf.close()
         except Exception:
             pass
         try:
