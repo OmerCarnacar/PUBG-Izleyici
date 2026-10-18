@@ -1,1 +1,5 @@
-- Düzeltme: HWiNFO kuruluyken program onu başlatamıyordu (Windows'un özel izin kuralı), Core Temp'e dönüyordu; artık HWiNFO açılıyor ve işlemci sıcaklığı AMD Software ile aynı gösteriliyor
+- Yeni: Görev Yöneticisi sekmesi — Performans ekranının aynısı: CPU, Bellek, her disk, Ethernet/Wi-Fi ve GPU; 60 saniyelik grafikler, mantıksal işlemci grafikleri, GPU motorları (3D, Copy, Video Encode/Decode), aynı Windows sayaçları
+- Harici program yok: HWiNFO, Core Temp ve GPU-Z artık başlatılmıyor ve ayarlarına dokunulmuyor; her şey Windows'tan ve ekran kartı sürücüsünden okunuyor
+- Ekran kartı çekirdek ve bellek saati artık Windows'tan (Görev Yöneticisi ile aynı kaynak)
+- Daha az işlemci: pencere simge durumundayken ya da oyun öndeyken ekran çizilmiyor (ortalama %0.1); Görev Yöneticisi sekmesi sadece açıkken ölçüm yapıyor
+- Ana pencere artık 'her zaman üstte' değil: tam ekran oyunun özel modunu bozmasın (mini mod üstte kalır)

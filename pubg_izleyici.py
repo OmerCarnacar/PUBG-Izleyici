@@ -1,6 +1,6 @@
 # PUBG Canlı İzleyici - anlık FPS, takılma, sıcaklık, darboğaz ve SORUN tespiti
 # Çalıştırma: PUBG_Izleyici_CALISTIR.bat (yönetici olarak açar, Python yoksa kurar)
-# Sıcaklıklar için Core Temp ve GPU-Z açık olmalı (küçültülmüş olabilir).
+# Harici program gerekmez: yük, saat, bellek, disk, ağ ve ekran kartı sıcaklığı Windows'tan ve ekran kartı sürücüsünden okunur.
 import os, sys, glob, json, struct, ctypes, threading, subprocess, collections, datetime, time, urllib.request, hashlib
 from array import array
 import tkinter as tk
@@ -20,12 +20,19 @@ S = 1.0  # ekran ölçeği (96 DPI = 1.0); pencere açılınca hesaplanır
 def px(v):
     return int(round(v * S))
 
-VERSION = '1.5.1'
+VERSION = '1.6.0'
 REPO = 'OmerCarnacar/PUBG-Izleyici'
 DEV = 'Ömer Çarnaçar'
 LINKEDIN = 'https://www.linkedin.com/in/omercarnacar'  # talep, öneri ve hata bildirimleri buradan
 # Her sürümde en üste eklenir; program güncellenince "Yenilikler" penceresinde gösterilir.
 CHANGES = [
+    ('1.6.0', [
+        'Yeni: Görev Yöneticisi sekmesi — Performans ekranının aynısı: CPU, Bellek, her disk, Ethernet/Wi-Fi ve GPU; 60 saniyelik grafikler, mantıksal işlemci grafikleri, GPU motorları (3D, Copy, Video Encode/Decode), aynı Windows sayaçları',
+        "Harici program yok: HWiNFO, Core Temp ve GPU-Z artık başlatılmıyor ve ayarlarına dokunulmuyor; her şey Windows'tan ve ekran kartı sürücüsünden okunuyor",
+        "Ekran kartı çekirdek ve bellek saati artık Windows'tan (Görev Yöneticisi ile aynı kaynak)",
+        'Daha az işlemci: pencere simge durumundayken ya da oyun öndeyken ekran çizilmiyor (ortalama %0.1); Görev Yöneticisi sekmesi sadece açıkken ölçüm yapıyor',
+        "Ana pencere artık 'her zaman üstte' değil: tam ekran oyunun özel modunu bozmasın (mini mod üstte kalır)",
+    ]),
     ('1.5.1', [
         "Düzeltme: HWiNFO kuruluyken program onu başlatamıyordu (Windows'un özel izin kuralı), Core Temp'e dönüyordu; artık HWiNFO açılıyor ve işlemci sıcaklığı AMD Software ile aynı gösteriliyor",
     ]),
@@ -612,13 +619,14 @@ def _load_hw():
     js = ps(r'''
 $o=[ordered]@{}
 $c=Get-CimInstance Win32_Processor | Select-Object -First 1
-$o.cpu=[ordered]@{name=$c.Name.Trim();cores=$c.NumberOfCores;threads=$c.NumberOfLogicalProcessors;mhz=$c.MaxClockSpeed;maker=$c.Manufacturer}
-$o.ram=@(Get-CimInstance Win32_PhysicalMemory | ForEach-Object { [ordered]@{gb=[math]::Round($_.Capacity/1GB);speed=$_.Speed;conf=$_.ConfiguredClockSpeed;type=$_.SMBIOSMemoryType;maker=$_.Manufacturer;part=("$($_.PartNumber)").Trim();slot=$_.DeviceLocator} })
+$o.cpu=[ordered]@{name=$c.Name.Trim();cores=$c.NumberOfCores;threads=$c.NumberOfLogicalProcessors;mhz=$c.MaxClockSpeed;maker=$c.Manufacturer;l2=$c.L2CacheSize;l3=$c.L3CacheSize;virt=$c.VirtualizationFirmwareEnabled;sockets=@(Get-CimInstance Win32_Processor).Count}
+$o.ramslots=(Get-CimInstance Win32_PhysicalMemoryArray | Measure-Object -Property MemoryDevices -Sum).Sum
+$o.ram=@(Get-CimInstance Win32_PhysicalMemory | ForEach-Object { [ordered]@{gb=[math]::Round($_.Capacity/1GB);speed=$_.Speed;conf=$_.ConfiguredClockSpeed;type=$_.SMBIOSMemoryType;maker=$_.Manufacturer;part=("$($_.PartNumber)").Trim();slot=$_.DeviceLocator;ff=$_.FormFactor} })
 $b=Get-CimInstance Win32_BaseBoard; $bi=Get-CimInstance Win32_BIOS
 $o.board=[ordered]@{maker=$b.Manufacturer;model=$b.Product;bios=$bi.SMBIOSBIOSVersion;biosdate=$bi.ReleaseDate.ToString('dd.MM.yyyy')}
 $os=Get-CimInstance Win32_OperatingSystem
 $o.os=[ordered]@{name=$os.Caption;build=$os.BuildNumber;ubr=(Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion').UBR;ver=(Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion').DisplayVersion}
-$o.disks=@(Get-PhysicalDisk | ForEach-Object { [ordered]@{name=$_.FriendlyName;type="$($_.MediaType)";bus="$($_.BusType)";gb=[math]::Round($_.Size/1GB);health="$($_.HealthStatus)"} })
+$o.disks=@(Get-PhysicalDisk | ForEach-Object { [ordered]@{name=$_.FriendlyName;type="$($_.MediaType)";bus="$($_.BusType)";gb=[math]::Round($_.Size/1GB);health="$($_.HealthStatus)";id="$($_.DeviceId)"} })
 $o.mon=@(Get-CimInstance -Namespace root\wmi WmiMonitorID -ErrorAction SilentlyContinue | ForEach-Object { -join ($_.UserFriendlyName | Where-Object { $_ } | ForEach-Object { [char]$_ }) })
 $o.vbs=(Get-CimInstance -Namespace root\Microsoft\Windows\DeviceGuard Win32_DeviceGuard -ErrorAction SilentlyContinue).VirtualizationBasedSecurityStatus
 $o | ConvertTo-Json -Depth 4 -Compress''', timeout=60)
@@ -1128,7 +1136,13 @@ class KmtGpu:
             if not d:
                 return None
             fan, _, temp = struct.unpack_from('<III', d, 48)
-            return {'T': round(temp / 10), 'RPM': fan}
+            out = {'T': round(temp / 10), 'RPM': fan, 'MClk': round(struct.unpack_from('<Q', d, 8)[0] / 1e6)}
+            n = self._q(self.h, 61, 56)  # KMTQAITYPE_NODEPERFDATA, düğüm 0 = 3D motoru
+            if n:
+                out['Clk'] = round(struct.unpack_from('<Q', n, 8)[0] / 1e6)
+                out['MaxClk'] = round(struct.unpack_from('<Q', n, 16)[0] / 1e6)
+                out['mV'] = struct.unpack_from('<I', n, 32)[0]
+            return out
         except Exception:
             return None
 
@@ -2834,6 +2848,142 @@ def coach_report(events, m, data):
     return rep
 
 
+# ---------------- Görev Yöneticisi görünümü (Performans sekmesinin aynısı, aynı Windows sayaçları) ----------------
+class TmCounters:
+    """Görev Yöneticisi'nin Performans sekmesindeki değerler, aynı PDH sayaçlarından. Sadece sekme açıkken okunur
+    (bir okuma ~7 ms)."""
+    SINGLE = {'cpu': r'\Processor Information(_Total)\% Processor Utility',
+              'perf': r'\Processor Information(_Total)\% Processor Performance',
+              'procs': r'\System\Processes', 'threads': r'\System\Threads', 'handles': r'\Process(_Total)\Handle Count',
+              'up': r'\System\System Up Time', 'commit': r'\Memory\Committed Bytes', 'climit': r'\Memory\Commit Limit',
+              'paged': r'\Memory\Pool Paged Bytes', 'nonpaged': r'\Memory\Pool Nonpaged Bytes',
+              'modified': r'\Memory\Modified Page List Bytes', 'sb1': r'\Memory\Standby Cache Core Bytes',
+              'sb2': r'\Memory\Standby Cache Normal Priority Bytes', 'sb3': r'\Memory\Standby Cache Reserve Bytes',
+              'avail': r'\Memory\Available Bytes'}
+    MULTI = {'percpu': r'\Processor Information(*)\% Processor Utility', 'idle': r'\PhysicalDisk(*)\% Idle Time',
+             'resp': r'\PhysicalDisk(*)\Avg. Disk sec/Transfer', 'rd': r'\PhysicalDisk(*)\Disk Read Bytes/sec',
+             'wr': r'\PhysicalDisk(*)\Disk Write Bytes/sec', 'tx': r'\Network Interface(*)\Bytes Sent/sec',
+             'rx': r'\Network Interface(*)\Bytes Received/sec', 'eng': r'\GPU Engine(*)\Utilization Percentage',
+             'ded': r'\GPU Adapter Memory(*)\Dedicated Usage', 'shr': r'\GPU Adapter Memory(*)\Shared Usage'}
+
+    def __init__(self, luid):
+        self.luid = (luid or '').lower()
+        self.pdh = ctypes.WinDLL('pdh')
+        self.q = ctypes.c_void_p()
+        self.pdh.PdhOpenQueryW(None, 0, ctypes.byref(self.q))
+        self.h = {}
+        for k, pth in list(self.SINGLE.items()) + list(self.MULTI.items()):
+            c = ctypes.c_void_p()
+            if self.pdh.PdhAddEnglishCounterW(self.q, pth, 0, ctypes.byref(c)) == 0:
+                self.h[k] = c
+        self.pdh.PdhCollectQueryData(self.q)
+
+    def one(self, k):
+        if k not in self.h:
+            return 0.0
+        v = _FMTV()
+        if self.pdh.PdhGetFormattedCounterValue(self.h[k], 0x200 | 0x8000, None, ctypes.byref(v)) or v.CStatus not in (0, 1):
+            return 0.0
+        return v.doubleValue
+
+    def many(self, k):
+        return pdh_items(self.pdh, self.h[k]) if k in self.h else []
+
+    def sample(self):
+        self.pdh.PdhCollectQueryData(self.q)
+        o = {k: self.one(k) for k in self.SINGLE}
+        per = []
+        for n, v in self.many('percpu'):
+            m = re.match(r'^(\d+),(\d+)$', n)
+            if m:
+                per.append((int(m.group(1)), int(m.group(2)), min(100.0, v)))
+        o['percpu'] = [v for _, _, v in sorted(per)]
+        disks = {}
+        for key in ('idle', 'resp', 'rd', 'wr'):
+            for n, v in self.many(key):
+                if n != '_Total':
+                    disks.setdefault(n, {})[key] = v
+        o['disks'] = {n: {'active': max(0.0, min(100.0, 100 - d.get('idle', 100))), 'resp': d.get('resp', 0) * 1000,
+                          'rd': d.get('rd', 0), 'wr': d.get('wr', 0)} for n, d in disks.items()}
+        net = {}
+        for key in ('tx', 'rx'):
+            for n, v in self.many(key):
+                net.setdefault(n, {})[key] = v * 8
+        o['net'] = net
+        eng = {}
+        for n, v in self.many('eng'):
+            n = n.lower()
+            if self.luid and self.luid not in n:
+                continue
+            m = re.search(r'_eng_(\d+)_engtype_(\w+)$', n)
+            if m:
+                key = (m.group(1), m.group(2))
+                eng[key] = eng.get(key, 0) + v
+        types = {}
+        for (_, t), v in eng.items():
+            types[t] = max(types.get(t, 0), min(100.0, v))
+        o['gpu_eng'] = types
+        o['gpu'] = max(types.values(), default=0)
+        pick = lambda k: max([v for n, v in self.many(k) if not self.luid or self.luid in n.lower()] or [0])
+        o['ded'], o['shr'] = pick('ded'), pick('shr')
+        return o
+
+
+def fmt_bytes(b, dec=1):
+    for u, d in (('TB', 1 << 40), ('GB', 1 << 30), ('MB', 1 << 20), ('KB', 1 << 10)):
+        if b >= d:
+            return f'{b / d:.{dec}f} {u}'
+    return f'{b:.0f} B'
+
+
+def fmt_rate(b):  # bayt/sn
+    return fmt_bytes(b, 1) + '/sn' if b >= 1024 else f'{b:.0f} B/sn'
+
+
+def fmt_bits(b):  # bit/sn
+    for u, d in (('Gbps', 1e9), ('Mbps', 1e6), ('Kbps', 1e3)):
+        if b >= d:
+            return f'{b / d:.1f} {u}'
+    return f'{b:.0f} bps'
+
+
+class TmGraph:
+    """Görev Yöneticisi tarzı grafik: ızgara, dolgu ve çizgi; 60 nokta. Öğeler bir kez çizilir, koordinatlar güncellenir."""
+    def __init__(self, parent, w, h, color, fill, vmax=100.0, n=60, grid=True, bg='#11151c'):
+        self.w, self.h, self.vmax, self.auto = px(w), px(h), vmax, vmax is None
+        self.d = collections.deque([0.0] * n, maxlen=n)
+        self.c = c = tk.Canvas(parent, width=self.w, height=self.h, bg=bg, highlightthickness=1, highlightbackground=color)
+        if grid:
+            for i in range(1, 10):
+                c.create_line(0, 0, 0, 0, fill='#1c2430', tags='gv')
+            for i in range(1, 10):
+                c.create_line(0, 0, 0, 0, fill='#1c2430', tags='gh')
+        self.poly = c.create_polygon(0, 0, 0, 0, 0, 0, fill=fill, outline='')
+        self.line = c.create_line(0, 0, 0, 0, fill=color, width=max(1, px(1.5)))
+        c.bind('<Configure>', lambda e: self.draw())
+
+    def push(self, v):
+        self.d.append(max(0.0, float(v or 0)))
+        if self.c.winfo_viewable():
+            self.draw()
+
+    def draw(self):
+        c = self.c
+        w, h = max(self.w, c.winfo_width()), max(self.h, c.winfo_height())
+        for i, it in enumerate(c.find_withtag('gv')):
+            c.coords(it, w * (i + 1) / 10, 0, w * (i + 1) / 10, h)
+        for i, it in enumerate(c.find_withtag('gh')):
+            c.coords(it, 0, h * (i + 1) / 10, w, h * (i + 1) / 10)
+        top = (max(self.d) * 1.2 or 1) if self.auto else self.vmax
+        n = len(self.d)
+        pts = []
+        for i, v in enumerate(self.d):
+            pts += [w * i / (n - 1), h - 1 - min(v, top) / top * (h - 2)]
+        c.coords(self.poly, *pts, w, h, 0, h)
+        c.coords(self.line, *pts)
+        return top
+
+
 # ---------------- Modern arayüz parçaları ----------------
 C_BG, C_CARD, C_LINE = '#0e1014', '#181b22', '#262b36'
 C_SIDE = '#0a0c10'  # sol menü
@@ -3035,72 +3185,10 @@ class Bar:
 NATIVE_GPU_OK = [False]
 
 
-HWINFO_EXE = [r'C:\Program Files\HWiNFO64\HWiNFO64.EXE', r'C:\Program Files\HWiNFO\HWiNFO64.EXE']
-
-
-def hwinfo_prepare():
-    """HWiNFO kuruluysa ayarlarında paylaşılan belleği açar (programın sıcaklığı okuyabilmesi için) ve
-    sadece sensör penceresiyle, küçültülmüş, karşılama ekranı olmadan açılmasını sağlar. Kurulu exe'yi döner."""
-    exe = next((x for x in HWINFO_EXE if os.path.exists(x)), None)
-    if not exe:
-        return None
-    ini = os.path.join(os.path.dirname(exe), 'HWiNFO64.INI')
-    want = {'SensorsOnly': '1', 'SensorsSM': '1', 'ShowWelcomeAndProgress': '0', 'MinimalizeSensors': '1',
-            'MinimalizeMainWnd': '1'}
-    try:
-        try:
-            with open(ini, encoding='latin-1') as f:
-                lines = f.read().splitlines()
-        except OSError:
-            lines = ['[Settings]']
-        have = {ln.split('=', 1)[0]: i for i, ln in enumerate(lines) if '=' in ln}
-        changed = False
-        for k, v in want.items():
-            if k in have:
-                if lines[have[k]] != f'{k}={v}':
-                    lines[have[k]] = f'{k}={v}'; changed = True
-            else:
-                lines.append(f'{k}={v}'); changed = True
-        if changed:
-            with open(ini, 'w', encoding='latin-1') as f:
-                f.write('\r\n'.join(lines) + '\r\n')
-    except OSError:
-        pass  # yazılamadıysa (yönetici değil) HWiNFO yine açılır, kullanıcı ayarı kendisi açabilir
-    return exe
-
-
 def start_sensor_apps():
-    """Sıcaklık için HWiNFO (varsa, Adrenalin ile aynı Tctl/Tdie değeri) ya da Core Temp'i; ekran kartı ayrıntıları
-    için GPU-Z'yi kuruluysa ve kapalıysa arka planda başlatır."""
-    names = {(p.info['name'] or '').lower() for p in psutil.process_iter(['name'])}
-    hw = hwinfo_prepare()
-    if hw and 'hwinfo64.exe' not in names:
-        # HWiNFO'nun bildirgesinde uiAccess="true" var: Windows böyle programları CreateProcess (subprocess) ile
-        # yönetici süreçten bile başlatmaz (hata 740); sadece ShellExecute (os.startfile) ile açılır.
-        try:
-            os.startfile(hw)
-        except OSError:
-            hw = None
-    apps = []
-    if not hw:  # HWiNFO varsa Core Temp gerekmez
-        apps.append(('core temp.exe', [r'C:\Program Files\Core Temp\Core Temp.exe', r'C:\Program Files (x86)\Core Temp\Core Temp.exe',
-                                       os.path.join(DIR, 'Core Temp.exe')], []))
-    if not NATIVE_GPU_OK[0]:  # ekran kartı sürücüden okunamıyorsa hot spot/saat/güç için GPU-Z
-        apps.append(('gpu-z.exe', [r'C:\Program Files (x86)\GPU-Z\GPU-Z.exe', r'C:\Program Files\GPU-Z\GPU-Z.exe'] +
-                     glob.glob(os.path.join(DIR, 'GPU-Z*.exe')), ['-minimized']))
-    si = subprocess.STARTUPINFO()
-    si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-    si.wShowWindow = 0  # SW_HIDE: pencere görünmez, arka planda ölçer
-    for exe, paths, args in apps:
-        if exe in names or any(n.startswith('gpu-z') for n in names) and exe == 'gpu-z.exe':
-            continue
-        for pth in paths:
-            if os.path.exists(pth):
-                try:
-                    subprocess.Popen([pth] + args, cwd=os.path.dirname(pth), startupinfo=si)
-                except OSError:
-                    pass
-                break
+    """Artık harici program başlatılmaz: sıcaklık, yük, saat ve bellek Windows'tan ve ekran kartı sürücüsünden okunur.
+    Kullanıcı Core Temp / HWiNFO / GPU-Z'yi kendisi açarsa onların değerleri de okunur (isteğe bağlı)."""
+    return
 
 
 # ---------------- Uygulama ----------------
@@ -3141,7 +3229,6 @@ class App:
         S = max(1.0, r.winfo_fpixels('1i') / 96)
         r.title('PUBG Canlı İzleyici')
         r.configure(bg=self.BG)
-        r.attributes('-topmost', True)
         r.geometry(f'{px(1210)}x{px(820)}')
         r.minsize(px(1180), px(780))
         style_window(r)
@@ -3210,10 +3297,11 @@ class App:
         self.f_hw = tk.Frame(main, bg=self.BG)
         self.f_vc = tk.Frame(main, bg=self.BG)
         self.f_rp = tk.Frame(main, bg=self.BG)
+        self.f_tm = tk.Frame(main, bg=self.BG)
         self.cur = None
 
         def show(f):
-            for x in (self.f_live, self.f_set, self.f_info, self.f_an, self.f_acc, self.f_hw, self.f_vc, self.f_rp):
+            for x in (self.f_live, self.f_set, self.f_info, self.f_an, self.f_acc, self.f_hw, self.f_vc, self.f_rp, self.f_tm):
                 x.pack_forget()
             f.pack(fill='both', expand=True, pady=(8, 0))
             self.cur = f
@@ -3230,18 +3318,20 @@ class App:
                 self.run_voice()
             if f is self.f_rp and not self.rp_done and load_cfg().get('api'):
                 self.load_matches()
+            if f is self.f_tm:
+                self.root.after(50, self.tm_start)
             if f is self.f_an:
                 self.ev_dirty = True
                 self.refresh_analysis()
 
-        for t, f in (('◉   Canlı', self.f_live), ('◧   Analiz', self.f_an), ('◈   Ayar Kontrolü', self.f_set),
+        for t, f in (('◉   Canlı', self.f_live), ('▤   Görev Yöneticisi', self.f_tm), ('◧   Analiz', self.f_an), ('◈   Ayar Kontrolü', self.f_set),
                      ('▦   Sistem Bilgisi', self.f_info), ('⚡   Donanım Testi', self.f_hw), ('♪   Takım Sesi', self.f_vc),
                      ('▷   Maç Tekrarı', self.f_rp),
                      ('◎   PUBG Hesap', self.f_acc)):
             row = tk.Frame(nav, bg=C_SIDE); row.pack(fill='x', pady=1)
             ind = tk.Frame(row, bg=C_SIDE, width=px(4)); ind.pack(side='left', fill='y')
             b = sbtn(row, t, lambda f=f: show(f), fg=C_SUB, font=(F_UI, 11, 'bold'))
-            b.config(pady=9, padx=16)
+            b.config(pady=6, padx=16)
             b.pack(side='left', fill='x', expand=True, padx=(0, 10))
             self.tabs[f] = (ind, b)
         self.set_done = False
@@ -3294,6 +3384,7 @@ class App:
         self.build_hwtest()
         self.build_voice()
         self.build_replay_tab()
+        self.build_tm_tab()
         show(self.f_live)
         threading.Thread(target=load_hw, daemon=True).start()
         threading.Thread(target=self.prepare_presentmon, daemon=True).start()
@@ -3357,10 +3448,8 @@ class App:
         self.v_cmax = T(info, 'en dolu çekirdek —', 9, C_SUB); self.v_cmax.pack(anchor='w')
         self.v_ccnt = T(info, '', 9, C_SUB); self.v_ccnt.pack(anchor='w')
         self.core_box = tk.Frame(f, bg=C_CARD); self.core_box.pack(fill='x', padx=12, pady=(2, 10))
-        # Core Temp yoksa işlemci sıcaklığı okunamaz (Windows bunu vermez); tıklanabilir ipucu
-        self.v_ct = T(f, 'İşlemci sıcaklığı için ücretsiz HWiNFO gerekli (AMD Software ile aynı değeri verir): indirmek için tıkla ↗', 9, C_WARN)
-        self.v_ct.config(cursor='hand2')
-        self.v_ct.bind('<Button-1>', lambda e: os.startfile('https://www.hwinfo.com/download/'))
+        # Windows işlemci sıcaklığını hiçbir programa vermez (sadece sürücü kuran araçlar okuyabilir)
+        self.v_ct = T(f, 'İşlemci sıcaklığını Windows vermez; diğer tüm değerler Windows\'tan canlı okunuyor.', 9, C_SUB)
         self.core_w = []
 
         # GPU
@@ -3428,7 +3517,7 @@ class App:
         if c and not self.v_cpuname.cget('text'):
             setl(self.v_cpuname, text=c.get('name', ''))
         self.g_cpu.warn, self.g_cpu.bad = LIM['hot'] - 7, LIM['hot']
-        no_ct = not v['cpu_t'] and self.tick_n > 8  # birkaç saniye sonra hâlâ yoksa Core Temp çalışmıyor
+        no_ct = not v['cpu_t'] and self.tick_n > 8  # birkaç saniye sonra hâlâ yoksa sıcaklık kaynağı yok
         self.g_cpu.set(v['cpu_t'] or None, '' if v['cpu_t'] else ('sensör yok' if no_ct else 'sensör başlıyor'))
         if no_ct != (self.v_ct.winfo_manager() == 'pack'):
             self.v_ct.pack(anchor='w', padx=12, pady=(0, 8)) if no_ct else self.v_ct.pack_forget()
@@ -3479,11 +3568,7 @@ class App:
                              f"CPU {v['cpu_t'] or '—'}°C  %{v['cpu_tot']}   ·   GPU {v['g_t'] or '—'}°C  %{v['g_load']}   ·   "
                              f"VRAM {v['vram'] / 1024:.1f} GB   ·   ping {ping0}   ·   takılma {v['st10']}/10sn",
                              fg=C_BAD if v['cpu_t'] >= LIM['hot'] or v['hs'] >= 100 else C_SUB)
-        if self.mini:
-            ping = f"{n['ping']} ms" if n.get('ping') is not None else '— ms'
-            setl(self.mini_l, text=(f"{v['fps']:.0f} FPS" if v['ft'] else '— FPS') +
-                               f"   1% {v['low1']:.0f}   ·   CPU {v['cpu_t'] or '—'}°   ·   GPU {v['g_t'] or '—'}° / {v['hs'] or '—'}°   ·   {ping}",
-                               fg=C_BAD if v['st10'] >= 3 or v['cpu_t'] >= LIM['hot'] else C_TXT)
+        self.render_mini(v)
         # Ağ
         if n['n']:
             pc = C_BAD if n['loss'] >= 10 or n['jit'] >= 20 else (C_WARN if n['loss'] or n['jit'] >= 8 else C_OK)
@@ -3491,6 +3576,15 @@ class App:
             setl(self.v_net, text=f"ort {n['avg']} · en fazla {n['max']} ms\ndalgalanma {n['jit']} ms · kayıp %{n['loss']}\n"
                                    f"↓ {n['down']:.1f}   ↑ {n['up']:.1f} Mbit/s")
             self.sp_ping.push(n['ping'])
+
+    def render_mini(self, v):
+        if not self.mini:
+            return
+        n = v['net']
+        ping = f"{n['ping']} ms" if n.get('ping') is not None else '— ms'
+        setl(self.mini_l, text=(f"{v['fps']:.0f} FPS" if v['ft'] else '— FPS') +
+             f"   1% {v['low1']:.0f}   ·   CPU {v['cpu_t'] or '—'}°   ·   GPU {v['g_t'] or '—'}°   ·   {ping}",
+             fg=C_BAD if v['st10'] >= 3 or v['cpu_t'] >= LIM['hot'] else C_TXT)
 
     def draw_cores(self, per, temps):
         nphys = len(temps) if temps else len(per)
@@ -3896,14 +3990,13 @@ class App:
             hwi = v['cpu_src'] == 'HWiNFO'
             row('ok' if 20 <= v['cpu_t'] <= 105 else 'warn', 'İşlemci sıcaklığı',
                 f"{v['cpu_t']}°C  ({'HWiNFO, CPU Tctl/Tdie' if hwi else 'Core Temp, en sıcak çekirdek'})",
-                ('AMD Software (Adrenalin) ve Ryzen Master ile aynı ölçüm.' if hwi else
-                 'Çekirdek sensörü: AMD Software\'in gösterdiği Tctl/Tdie değerinden birkaç derece düşük olabilir. '
-                 'Aynı değeri görmek için ücretsiz HWiNFO\'yu kur, program kendisi ayarlar ve başlatır.')
+                ('Açık olan HWiNFO\'dan okunuyor (AMD Software ile aynı ölçüm). İsteğe bağlı.' if hwi else
+                 'Açık olan Core Temp\'ten okunuyor (çekirdek sensörü). İsteğe bağlı.')
                 if 20 <= v['cpu_t'] <= 105 else 'Değer olağan dışı, kaynağı kontrol et.')
         else:
             row('bad', 'İşlemci sıcaklığı', 'okunamıyor',
-                'Windows işlemci sıcaklığını vermez. Ücretsiz HWiNFO\'yu kur (hwinfo.com); program onu kendisi ayarlar ve '
-                'arka planda başlatır.')
+                'Windows işlemci sıcaklığını hiçbir programa vermez; bunu okuyan araçlar kendi sürücülerini kurar. '
+                'Program harici araç kullanmaz. Diğer tüm değerler Windows\'tan.')
         row('ok', 'İşlemci yükü', f"%{v['cpu_tot']}  ({v['load_src']})",
             'Görev Yöneticisi ile aynı sayaç.' if v['load_src'] == 'Windows sayacı' else '')
         row('ok' if v['cpu_mhz'] else 'warn', 'İşlemci hızı', f"{v['cpu_mhz']} MHz  ({v['mhz_src'] or 'yok'})" if v['cpu_mhz'] else 'okunamıyor')
@@ -3918,7 +4011,7 @@ class App:
         if v['gdet_src']:
             row('ok', 'Hot spot, saat, güç', f"{v['hs']}°C · {v['clk']} MHz · {v['pwr']} W  ({v['gdet_src']})")
         else:
-            row('info', 'Hot spot, saat, güç', 'yok', 'İstersen GPU-Z\'yi kur; program kendisi arka planda başlatır.')
+            row('info', 'Hot spot ve güç', 'Windows vermiyor', 'Çekirdek ve bellek saati Windows\'tan okunuyor (Görev Yöneticisi sekmesi).')
         row('ok' if v['net_n'] and v['ping'] is not None else 'warn', 'Ağ (ping)',
             f"{v['ping']} ms" if v['ping'] is not None else 'yanıt yok')
         if v['game']:
@@ -4021,7 +4114,7 @@ class App:
                         {'bad': f'{hot}°C sınırına dayandı. Soğutucu oturması, termal macun ve kasa hava akışını kontrol et.',
                          'warn': 'Yüksek ama sınırın altında. Yaz aylarında oyunda sınıra yaklaşabilir.', 'ok': ''}[st])
                 else:
-                    row('warn', 'Tam yükte sıcaklık', 'ölçülemedi', 'Core Temp ya da HWiNFO olmadan işlemci sıcaklığı okunamaz.')
+                    row('info', 'Tam yükte sıcaklık', 'ölçülemedi', 'Windows işlemci sıcaklığını vermiyor; hız düşüşü (aşağıda) yine ölçülür.')
                 if c['mhz_first']:
                     st = 'bad' if c['drop'] >= 10 else ('warn' if c['drop'] >= 5 else 'ok')
                     row(st, 'Yük altında hız', f"{c['mhz_first']} → {c['mhz_last']} MHz  (düşüş %{max(0, c['drop'])})",
@@ -4225,6 +4318,361 @@ class App:
                 self.rp_status('✔ Tekrar tarayıcıda açıldı.', 1, C_OK)
         self.bg(work, done)
 
+    # ---------------- Görev Yöneticisi sekmesi ----------------
+    TM_COL = {'cpu': ('#4cc2ff', '#13304a'), 'mem': ('#b57cff', '#2c1f45'), 'disk': ('#5ad17a', '#16331f'),
+              'net': ('#e8a33d', '#3a2a12'), 'gpu': ('#4cc2ff', '#13304a')}
+
+    def build_tm_tab(self):
+        A = self.f_tm
+        self.tm, self.tm_running, self.tm_sel, self.tm_items, self.tm_hist, self.tm_last = None, False, 'cpu', {}, {}, None
+        self.tm_left = tk.Frame(A, bg=C_BG, width=px(250))
+        self.tm_left.pack(side='left', fill='y', padx=(12, 6), pady=10)
+        self.tm_left.pack_propagate(False)
+        self.tm_right = tk.Frame(A, bg=C_BG)
+        self.tm_right.pack(side='left', fill='both', expand=True, padx=(6, 12), pady=10)
+        tk.Label(self.tm_right, text='Yükleniyor…', bg=C_BG, fg=C_SUB, font=(F_UI, 10)).pack()
+
+    def tm_start(self):
+        if not self.tm_running:
+            self.tm_running = True
+            self.tm_tick()
+
+    def tm_hist_push(self, key, v):
+        d = self.tm_hist.setdefault(key, collections.deque([0.0] * 60, maxlen=60))
+        d.append(max(0.0, float(v or 0)))
+
+    def tm_tick(self):
+        if not self.f_tm.winfo_ismapped():  # sekme kapalıyken hiç ölçüm yapılmaz
+            self.tm_running = False
+            return
+        try:
+            if self.tm is None:
+                self.tm = TmCounters(self.kmt.luid)
+                self.root.after(1000, self.tm_tick)
+                return
+            s = self.tm_last = self.tm.sample()
+            vm = psutil.virtual_memory()
+            s['memtotal'], s['memused'] = vm.total, vm.total - s['avail'] if s['avail'] else vm.used
+            s['kmt'] = self.kmt.read() or {}
+            self.tm_hist_push('cpu', s['cpu'])
+            self.tm_hist_push('mem', s['memused'] / (1 << 30))
+            for i, v in enumerate(s['percpu']):
+                self.tm_hist_push(f'cpu{i}', v)
+            for n, d in s['disks'].items():
+                self.tm_hist_push('disk:' + n, d['active'])
+            for n, d in s['net'].items():
+                self.tm_hist_push('net:' + n, d.get('tx', 0) + d.get('rx', 0))
+                self.tm_hist_push('nettx:' + n, d.get('tx', 0))
+                self.tm_hist_push('netrx:' + n, d.get('rx', 0))
+            self.tm_hist_push('gpu', s['gpu'])
+            for t, v in s['gpu_eng'].items():
+                self.tm_hist_push('eng:' + t, v)
+            self.tm_hist_push('ded', s['ded'] / (1 << 30))
+            self.tm_hist_push('shr', s['shr'] / (1 << 30))
+            self.tm_update_list(s)
+            self.tm_update_detail(s)
+        except Exception as e:
+            setl(self.l_state, text=f'Görev Yöneticisi görünümü: {e}')
+        self.root.after(1000, self.tm_tick)
+
+    # sol liste
+    def tm_keys(self, s):
+        keys = ['cpu', 'mem']
+        keys += ['disk:' + n for n in sorted(s['disks'], key=lambda x: int(x.split()[0]) if x.split()[0].isdigit() else 99)]
+        for n in s['net']:
+            if re.search(r' _\d+$', n) or re.search(r'loopback|isatap|teredo|6to4|kernel debug', n, re.I):
+                continue
+            if sum(self.tm_hist.get('net:' + n, [0])) > 0:  # bağlı (trafiği olan) bağdaştırıcılar, Görev Yöneticisi gibi
+                keys.append('net:' + n)
+        keys.append('gpu')
+        return keys
+
+    def tm_label(self, key):
+        if key == 'cpu':
+            return 'CPU'
+        if key == 'mem':
+            return 'Bellek'
+        if key == 'gpu':
+            return 'GPU 0'
+        if key.startswith('disk:'):
+            n = key[5:].split()
+            return f"Disk {n[0]} ({' '.join(n[1:])})" if len(n) > 1 else f'Disk {n[0]}'
+        n = key[4:].lower()
+        return 'Ethernet' if 'ethernet' in n or 'gbe' in n else ('Wi-Fi' if 'wi-fi' in n or 'wireless' in n or 'wlan' in n else key[4:][:18])
+
+    def tm_update_list(self, s):
+        keys = self.tm_keys(s)
+        if list(self.tm_items) != keys:
+            for w in self.tm_left.winfo_children():
+                w.destroy()
+            self.tm_items = {}
+            for k in keys:
+                kind = k.split(':')[0]
+                col, fill = self.TM_COL[kind]
+                f = tk.Frame(self.tm_left, bg=C_BG, cursor='hand2')
+                f.pack(fill='x', pady=2)
+                g = TmGraph(f, 68, 46, col, fill, 100.0 if kind in ('cpu', 'gpu', 'disk') else None, grid=False)
+                g.c.pack(side='left', padx=(8, 8), pady=6)
+                tx = tk.Frame(f, bg=C_BG); tx.pack(side='left', fill='x', expand=True)
+                nl = tk.Label(tx, text=self.tm_label(k), bg=C_BG, fg=C_TXT, font=(F_UI, 11, 'bold'), anchor='w')
+                nl.pack(fill='x')
+                vl = tk.Label(tx, text='', bg=C_BG, fg=C_SUB, font=(F_UI, 9), anchor='w', justify='left')
+                vl.pack(fill='x')
+                for w in (f, g.c, tx, nl, vl):
+                    w.bind('<Button-1>', lambda e, k=k: self.tm_select(k))
+                self.tm_items[k] = (f, g, nl, vl, tx)
+            if self.tm_sel not in self.tm_items:
+                self.tm_sel = 'cpu'
+            self.tm_select(self.tm_sel, force=True)
+        for k, (f, g, nl, vl, tx) in self.tm_items.items():
+            on = k == self.tm_sel
+            for w in (f, tx, nl, vl):
+                setl(w, bg=C_CARD if on else C_BG)
+            hist = self.tm_hist.get('mem' if k == 'mem' else k)
+            if hist:
+                if k == 'mem':
+                    g.vmax, g.auto = s['memtotal'] / (1 << 30), False
+                g.d = collections.deque(hist, maxlen=60)
+                g.draw()
+            if k == 'cpu':
+                txt = f"%{s['cpu']:.0f}  {HW.get('cpu', {}).get('mhz', 0) * s['perf'] / 100000:.2f} GHz"
+            elif k == 'mem':
+                txt = f"{s['memused'] / (1 << 30):.1f}/{s['memtotal'] / (1 << 30):.1f} GB (%{100 * s['memused'] / s['memtotal']:.0f})"
+            elif k.startswith('disk:'):
+                d = s['disks'].get(k[5:], {})
+                info = self.tm_disk_info(k[5:])
+                txt = f"{(info or {}).get('type', '')} ({(info or {}).get('bus', '')})\n%{d.get('active', 0):.0f}"
+            elif k.startswith('net:'):
+                d = s['net'].get(k[4:], {})
+                txt = f"G: {fmt_bits(d.get('tx', 0))}  A: {fmt_bits(d.get('rx', 0))}"
+            else:
+                t = s['kmt'].get('T')
+                txt = f"{(self.ngpu.main or '')[:26]}\n%{s['gpu']:.0f}" + (f"  ({t} °C)" if t else '')
+            setl(vl, text=txt)
+
+    def tm_disk_info(self, inst):
+        num_ = inst.split()[0]
+        return next((d for d in HW.get('disks') or [] if str(d.get('id')) == num_), None)
+
+    # sağ ayrıntı
+    def tm_select(self, key, force=False):
+        if key == self.tm_sel and not force:
+            return
+        self.tm_sel = key
+        R = self.tm_right
+        for w in R.winfo_children():
+            w.destroy()
+        kind = key.split(':')[0]
+        col, fill = self.TM_COL[kind]
+        self.tm_dw, self.tm_graphs = {}, {}
+        head = tk.Frame(R, bg=C_BG); head.pack(fill='x')
+        title = {'cpu': 'CPU', 'mem': 'Bellek', 'gpu': 'GPU'}.get(kind) or self.tm_label(key)
+        tk.Label(head, text=title, bg=C_BG, fg=C_TXT, font=(F_UI, 22, 'bold')).pack(side='left')
+        sub = {'cpu': (HW.get('cpu') or {}).get('name', ''), 'mem': f"{HW.get('ram_gb', 0)} GB",
+               'gpu': self.ngpu.main or ''}.get(kind, '')
+        if kind == 'disk':
+            sub = (self.tm_disk_info(key[5:]) or {}).get('name', '')
+        elif kind == 'net':
+            sub = key[4:]
+        tk.Label(head, text=sub, bg=C_BG, fg=C_TXT, font=(F_UI, 12)).pack(side='right', pady=(10, 0))
+
+        def caption(parent, left, right):
+            r = tk.Frame(parent, bg=C_BG); r.pack(fill='x', pady=(6, 1))
+            tk.Label(r, text=left, bg=C_BG, fg=C_SUB, font=(F_UI, 9)).pack(side='left')
+            lab = tk.Label(r, text=right, bg=C_BG, fg=C_SUB, font=(F_UI, 9))
+            lab.pack(side='right')
+            return lab
+
+        def graph(parent, key_, h, vmax, color=col, fl=fill):
+            g = TmGraph(parent, 600, h, color, fl, vmax)
+            g.c.pack(fill='both', expand=True)
+            if key_ in self.tm_hist:
+                g.d = collections.deque(self.tm_hist[key_], maxlen=60)
+            self.tm_graphs[key_] = g
+            return g
+        if kind == 'cpu':
+            self.tm_cpu_box = tk.Frame(R, bg=C_BG); self.tm_cpu_box.pack(fill='both', expand=True)
+            caption(self.tm_cpu_box, '% Kullanım', '%100')
+            graph(self.tm_cpu_box, 'cpu', 260, 100.0)
+            self.tm_logical = False
+            b = hover(tk.Button(R, text='▦  Mantıksal işlemciler', command=self.tm_toggle_logical, bg=C_CARD, fg=C_TXT, relief='flat',
+                                bd=0, font=(F_UI, 9, 'bold'), padx=10, pady=3, cursor='hand2'))
+            b.pack(anchor='e', pady=(4, 0))
+        elif kind == 'mem':
+            caption(R, 'Bellek kullanımı', f"{HW.get('ram_gb', 0)} GB")
+            graph(R, 'mem', 220, psutil.virtual_memory().total / (1 << 30))
+            tk.Label(R, text='Bellek bileşimi', bg=C_BG, fg=C_SUB, font=(F_UI, 9), anchor='w').pack(fill='x', pady=(8, 1))
+            self.tm_comp = tk.Canvas(R, height=px(34), bg='#11151c', highlightthickness=1, highlightbackground=col)
+            self.tm_comp.pack(fill='x')
+        elif kind == 'disk':
+            caption(R, 'Etkin süre', '%100')
+            graph(R, key, 200, 100.0)
+            self.tm_disk_cap = caption(R, 'Disk aktarım hızı', '')
+            graph(R, 'diskx:' + key[5:], 110, None)
+        elif kind == 'net':
+            self.tm_net_cap = caption(R, 'Aktarım hızı', '')
+            graph(R, 'net:' + key[4:], 260, None)
+        else:
+            grid = tk.Frame(R, bg=C_BG); grid.pack(fill='both', expand=True)
+            for i, (t, lab) in enumerate((('3d', '3D'), ('copy', 'Copy'), ('videoencode', 'Video Encode'), ('videodecode', 'Video Decode'))):
+                cell = tk.Frame(grid, bg=C_BG)
+                cell.grid(row=i // 2, column=i % 2, sticky='nsew', padx=(0 if i % 2 == 0 else 6, 0), pady=(0, 4))
+                caption(cell, lab, '%100')
+                g = TmGraph(cell, 300, 110, col, fill, 100.0)
+                g.c.pack(fill='both', expand=True)
+                g.d = collections.deque(self.tm_hist.get('eng:' + t, [0.0] * 60), maxlen=60)
+                self.tm_graphs['eng:' + t] = g
+            grid.grid_columnconfigure(0, weight=1); grid.grid_columnconfigure(1, weight=1)
+            self.tm_ded_cap = caption(R, 'Ayrılmış GPU belleği kullanımı', '')
+            graph(R, 'ded', 60, max([x['vram'] for x in HW.get('gpus') or []] or [1]) / 1024)
+            self.tm_shr_cap = caption(R, 'Paylaşılan GPU belleği kullanımı', '')
+            graph(R, 'shr', 60, psutil.virtual_memory().total / 2 / (1 << 30))
+        tk.Frame(R, bg=C_BG, height=px(6)).pack()
+        stats = tk.Frame(R, bg=C_BG); stats.pack(fill='x', pady=(6, 0))
+        dyn = tk.Frame(stats, bg=C_BG); dyn.pack(side='left', anchor='n', fill='x', expand=True)
+        sta = tk.Frame(stats, bg=C_BG); sta.pack(side='left', anchor='n', padx=(20, 0))
+        names = {'cpu': ['Kullanım', 'Hız', 'İşlemler', 'İş parçacıkları', 'Tanıtıcılar', 'Çalışma süresi'],
+                 'mem': ['Kullanımda', 'Kullanılabilir', 'Kaydedilen', 'Önbelleğe alınan', 'Disk belleğine alınan havuz',
+                         'Disk belleğine alınmayan havuz'],
+                 'disk': ['Etkin süre', 'Ortalama yanıt süresi', 'Okuma hızı', 'Yazma hızı'],
+                 'net': ['Gönder', 'Al'],
+                 'gpu': ['Kullanım', 'Ayrılmış GPU belleği', 'Paylaşılan GPU belleği', 'GPU sıcaklığı', 'Çekirdek saati',
+                         'Bellek saati']}[kind]
+        for i, n in enumerate(names):
+            cell = tk.Frame(dyn, bg=C_BG)
+            cell.grid(row=i // 3, column=i % 3, sticky='w', padx=(0, 26), pady=(0, 8))
+            tk.Label(cell, text=n, bg=C_BG, fg=C_SUB, font=(F_UI, 9), anchor='w').pack(anchor='w')
+            v = tk.Label(cell, text='—', bg=C_BG, fg=C_TXT, font=(F_UI, 15), anchor='w')
+            v.pack(anchor='w')
+            self.tm_dw[n] = v
+        for i, (a, b) in enumerate(self.tm_static(key)):
+            tk.Label(sta, text=a + ':', bg=C_BG, fg=C_SUB, font=(F_UI, 9), anchor='w').grid(row=i, column=0, sticky='w', pady=1)
+            tk.Label(sta, text=b, bg=C_BG, fg=C_TXT, font=(F_UI, 9), anchor='w').grid(row=i, column=1, sticky='w', padx=(14, 0), pady=1)
+        if self.tm_last:
+            self.tm_update_detail(self.tm_last)
+
+    def tm_toggle_logical(self):
+        self.tm_logical = not self.tm_logical
+        box = self.tm_cpu_box
+        for w in box.winfo_children():
+            w.destroy()
+        for k in [k for k in self.tm_graphs if k.startswith('cpu')]:
+            del self.tm_graphs[k]
+        col, fill = self.TM_COL['cpu']
+        if not self.tm_logical:
+            r = tk.Frame(box, bg=C_BG); r.pack(fill='x', pady=(6, 1))
+            tk.Label(r, text='% Kullanım', bg=C_BG, fg=C_SUB, font=(F_UI, 9)).pack(side='left')
+            tk.Label(r, text='%100', bg=C_BG, fg=C_SUB, font=(F_UI, 9)).pack(side='right')
+            g = TmGraph(box, 600, 260, col, fill, 100.0); g.c.pack(fill='both', expand=True)
+            g.d = collections.deque(self.tm_hist.get('cpu', [0.0] * 60), maxlen=60)
+            self.tm_graphs['cpu'] = g
+            return
+        n = len((self.tm_last or {}).get('percpu') or []) or (psutil.cpu_count() or 1)
+        cols = 4 if n <= 16 else (6 if n <= 36 else 8)
+        grid = tk.Frame(box, bg=C_BG); grid.pack(fill='both', expand=True, pady=(6, 0))
+        for i in range(n):
+            g = TmGraph(grid, 140, 70, col, fill, 100.0, grid=False)
+            g.c.grid(row=i // cols, column=i % cols, sticky='nsew', padx=2, pady=2)
+            g.d = collections.deque(self.tm_hist.get(f'cpu{i}', [0.0] * 60), maxlen=60)
+            self.tm_graphs[f'cpu{i}'] = g
+        for c_ in range(cols):
+            grid.grid_columnconfigure(c_, weight=1)
+
+    def tm_static(self, key):
+        kind = key.split(':')[0]
+        c = HW.get('cpu') or {}
+        if kind == 'cpu':
+            return [('Taban hız', f"{c.get('mhz', 0) / 1000:.2f} GHz"), ('Yuvalar', str(c.get('sockets') or 1)),
+                    ('Çekirdekler', str(c.get('cores', '?'))), ('Mantıksal işlemciler', str(c.get('threads', '?'))),
+                    ('Sanallaştırma', 'Etkin' if c.get('virt') else 'Devre dışı'),
+                    ('L2 önbelleği', fmt_bytes((c.get('l2') or 0) * 1024, 0)), ('L3 önbelleği', fmt_bytes((c.get('l3') or 0) * 1024, 0))]
+        if kind == 'mem':
+            rams = HW.get('ram') or [{}]
+            inst = sum(r.get('gb') or 0 for r in rams)
+            res = inst * (1 << 30) - psutil.virtual_memory().total
+            return [('Hız', f"{rams[0].get('conf') or rams[0].get('speed') or '?'} MT/s"),
+                    ('Kullanılan yuvalar', f"{len(rams)}/{HW.get('ramslots') or '?'}"),
+                    ('Form faktörü', {8: 'DIMM', 12: 'SODIMM'}.get(rams[0].get('ff'), 'DIMM')),
+                    ('Donanıma ayrılmış', fmt_bytes(max(0, res), 0))]
+        if kind == 'disk':
+            d = self.tm_disk_info(key[5:]) or {}
+            parts = key[5:].split()[1:]
+            return [('Kapasite', f"{d.get('gb', 0)} GB"), ('Tür', f"{d.get('type', '')} ({d.get('bus', '')})"),
+                    ('Sürücüler', ' '.join(parts) or '—'), ('Durum', {'Healthy': 'Sağlıklı'}.get(d.get('health'), d.get('health', '')))]
+        if kind == 'net':
+            n = key[4:].lower()
+            want = 'ethernet' if 'ethernet' in n or 'gbe' in n else 'wi-fi'
+            ip4 = ''
+            for name, addrs in psutil.net_if_addrs().items():
+                if want in name.lower():
+                    ip4 = next((a.address for a in addrs if a.family == socket.AF_INET and not a.address.startswith('169.254')), '')
+                    if ip4:
+                        break
+            return [('Bağdaştırıcı', key[4:][:40]), ('IPv4 adresi', ip4 or '—')]
+        g = max(HW.get('gpus') or [{}], key=lambda x: x.get('vram', 0))
+        return [('Sürücü sürümü', g.get('driver', '')), ('Sürücü tarihi', (g.get('date') or '')[:10]), ('DirectX sürümü', '12'),
+                ('Ayrılmış GPU belleği', f"{(g.get('vram') or 0) / 1024:.1f} GB"),
+                ('Paylaşılan GPU belleği', f"{psutil.virtual_memory().total / 2 / (1 << 30):.1f} GB")]
+
+    def tm_update_detail(self, s):
+        key, kind, W = self.tm_sel, self.tm_sel.split(':')[0], getattr(self, 'tm_dw', {})
+        for k, g in getattr(self, 'tm_graphs', {}).items():
+            src = k
+            if k.startswith('diskx:'):  # disk aktarım: okuma + yazma
+                d = s['disks'].get(k[6:], {})
+                self.tm_hist_push(k, d.get('rd', 0) + d.get('wr', 0))
+            if src in self.tm_hist:
+                g.d = collections.deque(self.tm_hist[src], maxlen=60)
+                top = g.draw()
+                if k.startswith('diskx:') and hasattr(self, 'tm_disk_cap'):
+                    setl(self.tm_disk_cap, text=fmt_rate(top))
+                elif k.startswith('net:') and hasattr(self, 'tm_net_cap'):
+                    setl(self.tm_net_cap, text=fmt_bits(top))
+        set_ = lambda n, v: n in W and setl(W[n], text=v)
+        if kind == 'cpu':
+            up = int(s['up'])
+            set_('Kullanım', f"%{s['cpu']:.0f}")
+            set_('Hız', f"{(HW.get('cpu') or {}).get('mhz', 0) * s['perf'] / 100000:.2f} GHz")
+            set_('İşlemler', f"{s['procs']:.0f}"); set_('İş parçacıkları', f"{s['threads']:.0f}")
+            set_('Tanıtıcılar', f"{s['handles']:.0f}")
+            set_('Çalışma süresi', f"{up // 86400}:{up % 86400 // 3600:02d}:{up % 3600 // 60:02d}:{up % 60:02d}")
+        elif kind == 'mem':
+            cache = s['sb1'] + s['sb2'] + s['sb3'] + s['modified']
+            set_('Kullanımda', fmt_bytes(s['memused'])); set_('Kullanılabilir', fmt_bytes(s['avail']))
+            set_('Kaydedilen', f"{s['commit'] / (1 << 30):.1f}/{s['climit'] / (1 << 30):.1f} GB")
+            set_('Önbelleğe alınan', fmt_bytes(cache)); set_('Disk belleğine alınan havuz', fmt_bytes(s['paged']))
+            set_('Disk belleğine alınmayan havuz', fmt_bytes(s['nonpaged']))
+            c = getattr(self, 'tm_comp', None)
+            if c is not None and c.winfo_exists():
+                c.delete('all')
+                w, h, tot = max(10, c.winfo_width()), max(10, c.winfo_height()), s['memtotal']
+                used_ = s['memused'] - s['modified']
+                x = 0
+                for v, colr in ((used_, '#7d4fd1'), (s['modified'], '#a8323e'), (s['sb1'] + s['sb2'] + s['sb3'], '#4a3a6e'),
+                                (tot - s['memused'] - (s['sb1'] + s['sb2'] + s['sb3']), '#11151c')):
+                    ww = w * max(0, v) / tot
+                    c.create_rectangle(x, 0, x + ww, h, fill=colr, outline='#b57cff')
+                    x += ww
+        elif kind == 'disk':
+            d = s['disks'].get(key[5:], {})
+            set_('Etkin süre', f"%{d.get('active', 0):.0f}"); set_('Ortalama yanıt süresi', f"{d.get('resp', 0):.1f} ms")
+            set_('Okuma hızı', fmt_rate(d.get('rd', 0))); set_('Yazma hızı', fmt_rate(d.get('wr', 0)))
+        elif kind == 'net':
+            d = s['net'].get(key[4:], {})
+            set_('Gönder', fmt_bits(d.get('tx', 0))); set_('Al', fmt_bits(d.get('rx', 0)))
+        else:
+            k_ = s['kmt']
+            tot = max([x['vram'] for x in HW.get('gpus') or []] or [0]) / 1024
+            set_('Kullanım', f"%{s['gpu']:.0f}")
+            set_('Ayrılmış GPU belleği', f"{s['ded'] / (1 << 30):.1f}/{tot:.1f} GB")
+            set_('Paylaşılan GPU belleği', f"{s['shr'] / (1 << 30):.1f}/{psutil.virtual_memory().total / 2 / (1 << 30):.1f} GB")
+            set_('GPU sıcaklığı', f"{k_.get('T')} °C" if k_.get('T') else '—')
+            set_('Çekirdek saati', f"{k_.get('Clk')} MHz" if k_.get('Clk') else '—')
+            set_('Bellek saati', f"{k_.get('MClk')} MHz" if k_.get('MClk') else '—')
+            if hasattr(self, 'tm_ded_cap'):
+                setl(self.tm_ded_cap, text=f'{tot:.1f} GB')
+                setl(self.tm_shr_cap, text=f"{psutil.virtual_memory().total / 2 / (1 << 30):.1f} GB")
+
     # ---------------- PUBG hesap sekmesi ----------------
     def build_account(self):
         A = self.f_acc
@@ -4413,7 +4861,7 @@ class App:
             L(f"ℹ Ana ekran {LIM['hz']} Hz. Oyunda FPS sınırını {LIM['cap']} yap (FreeSync/G-Sync açıksa).", None)
         if not any('SSD' in (d.get('type') or '') or 'NVMe' in (d.get('bus') or '') for d in h.get('disks') or []):
             L('⚠ SSD bulunamadı. PUBG HDD\'de yüklemede ve harita akışında takılır.', 'warn')
-        L('\nSıcaklık ve canlı değerler için Core Temp ile GPU-Z açık olmalı.', 'dim')
+        L('\nTüm değerler Windows\'tan ve ekran kartı sürücüsünden okunur; harici program gerekmez.', 'dim')
         return lines
 
     def save_info(self):
@@ -4501,13 +4949,32 @@ class App:
                 return True
         return False
 
+    def ui_mode(self):
+        """'full': ana pencere görünür, 'mini': sadece mini çubuk, None: kimse bakmıyor (simge durumunda ya da
+        oyun öndeyken ana pencere çizilmez; veri toplanmaya devam eder). Böylece boşuna işlemci harcanmaz."""
+        if self.mini:
+            return 'mini'
+        try:
+            if self.root.state() in ('iconic', 'withdrawn'):
+                return None
+            fg = ctypes.windll.user32.GetForegroundWindow()
+            pid = ctypes.c_ulong()
+            ctypes.windll.user32.GetWindowThreadProcessId(fg, ctypes.byref(pid))
+            if self.game_pid and pid.value == self.game_pid:
+                return None
+        except Exception:
+            pass
+        return 'full'
+
     def fast_tick(self):
         try:
-            f = self.pm.fast_fps() if self.game_pid else None
+            mode = self.ui_mode()
+            f = self.pm.fast_fps() if self.game_pid and mode else None
             if f is not None:
                 col = C_OK if f >= LIM['cap'] * 0.6 else C_WARN
-                setl(self.hud_fps, text=f'{f:.0f} FPS', fg=col)
-                setl(self.v_fps, text=f'{f:.0f}', fg=C_TXT)
+                if mode == 'full':
+                    setl(self.hud_fps, text=f'{f:.0f} FPS', fg=col)
+                    setl(self.v_fps, text=f'{f:.0f}', fg=C_TXT)
                 if self.mini:
                     t = self.mini_l.cget('text')
                     setl(self.mini_l, text=f'{f:.0f} FPS' + (t[t.index('   1%'):] if '   1%' in t else ''))
@@ -4585,8 +5052,9 @@ class App:
         kt = self.kmt.read()
         if kt and kt['T']:
             gpu['T'] = kt['T']
-            if kt['RPM']:
-                gpu['RPM'] = kt['RPM']
+            for k_ in ('RPM', 'Clk', 'MClk'):  # sürücü/GPU-Z vermediyse Windows'un değeri
+                if kt.get(k_) and not gpu.get(k_):
+                    gpu[k_] = kt[k_]
         pd = self.gpdh.read()
         if pd:
             gpu['Load'] = pd['Load']
@@ -4676,11 +5144,16 @@ class App:
                              g_load, n['ping'], n['loss'], bound])
 
         # Ekran
-        self.render({'ft': ft, 'fps': fps, 'low1': low1, 'low01': low01, 'ftavg': (sum_ft / len(ft)) if ft else 0,
+        mode = self.ui_mode()
+        rv = ({'ft': ft, 'fps': fps, 'low1': low1, 'low01': low01, 'ftavg': (sum_ft / len(ft)) if ft else 0,
                      'ftmax': max(ft) if ft else None, 'game': game, 'bound': bound, 'st10': st10, 'ratio': ratio,
                      'cpu_t': cpu_t, 'cpu_tot': cpu_tot, 'cpu_mhz': cpu_mhz, 'core_max': core_max, 'per': per,
                      'cores': cpu.get('Cores', []) if cpu else [], 'g_t': g_t, 'hs': hs, 'g_load': g_load, 'gz': gz,
                      'pwr': pwr, 'vram': vram, 'net': n, 'gdet': gpu if gz else {}, 'dr': dr, 'dw': dw})
+        if mode == 'full':
+            self.render(rv)
+        elif mode == 'mini':
+            self.render_mini(rv)
         self.snap = {'cpu_t': cpu_t, 'cpu_src': (cpu or {}).get('src', 'Core Temp') if cpu else '', 'cpu_mhz': cpu_mhz,
                      'mhz_src': 'Core Temp' if (cpu or {}).get('MHz') else ('Windows sayacı' if cpu_mhz else ''),
                      'cpu_tot': cpu_tot, 'load_src': 'Windows sayacı' if cu else 'psutil', 'g_t': g_t,
@@ -4689,7 +5162,7 @@ class App:
                      'clk': gpu.get('Clk') or 0, 'pwr': pwr, 'ping': n.get('ping'), 'net_n': n['n'],
                      'fps': fps if ft else None, 'game': game, 'gname': self.ngpu.main}
         self.tick_n += 1
-        if self.tick_n % 2 == 0:
+        if self.tick_n % 2 == 0 and mode == 'full':
             self.refresh_analysis()
 
         # Canlı teşhis
@@ -4813,9 +5286,9 @@ class App:
             if len(issues) > 1:
                 o += ['', 'Diğer bulgular:'] + ['- ' + t for _, t in issues[1:]]
         if not any(x['CPUSic'] for x in s):
-            o += ['', 'Not: Core Temp kapalıydı, işlemci sıcaklığı ölçülmedi.']
+            o += ['', 'Not: İşlemci sıcaklığı ölçülmedi (Windows bu değeri vermez).']
         if not any(x['GPUSic'] for x in s):
-            o.append('Not: GPU-Z kapalıydı, ekran kartı sıcaklığı ölçülmedi.')
+            o.append('Not: Ekran kartı sıcaklığı okunamadı (sürücü bu değeri vermiyor).')
         if self.events:
             cz = collections.Counter(e['why'].split(' (')[0].split(':')[0] for e in self.events)
             o += ['', 'Takılma sebepleri (kayıttan):'] + [f'- {k}: {v} kez' for k, v in cz.most_common()]
