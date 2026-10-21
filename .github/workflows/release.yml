@@ -1,11 +1,11 @@
-# main dalına pubg_izleyici.py içinde yeni bir VERSION gönderilince EXE'yi derler ve GitHub Releases'e koyar.
+# main dalına pubg_izleyici/config.py içinde yeni bir VERSION gönderilince EXE'yi derler ve GitHub Releases'e koyar.
 # Aynı sürüm zaten yayımlanmışsa hiçbir şey yapmaz. Programın güncelleyicisi en son sürümü buradan indirir.
 name: Sürüm yayımla
 
 on:
   push:
     branches: [main]
-    paths: ['pubg_izleyici.py', 'RELEASE_NOTES.md', '.github/workflows/release.yml']
+    paths: ['pubg_izleyici/**', 'run.py', 'pyproject.toml', 'RELEASE_NOTES.md', '.github/workflows/release.yml']
   workflow_dispatch:
 
 permissions:
@@ -28,7 +28,7 @@ jobs:
         id: v
         shell: pwsh
         run: |
-          $m = Select-String -Path pubg_izleyici.py -Pattern "^VERSION = '([0-9.]+)'"
+          $m = Select-String -Path pubg_izleyici/config.py -Pattern "^VERSION = '([0-9.]+)'"
           if (-not $m) { throw 'VERSION bulunamadı' }
           $ver = $m.Matches[0].Groups[1].Value
           "ver=$ver" >> $env:GITHUB_OUTPUT
@@ -41,6 +41,13 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Kod denetimi (ruff)
+        if: steps.v.outputs.skip != '1'
+        shell: pwsh
+        run: |
+          python -m pip install --disable-pip-version-check ruff==0.17.1
+          python -m ruff check pubg_izleyici run.py
+
       - name: EXE derle
         if: steps.v.outputs.skip != '1'
         shell: pwsh
@@ -48,7 +55,7 @@ jobs:
           python -m pip install --disable-pip-version-check pyinstaller==6.22.3 psutil==7.2.2 pillow==13.0.0
           gh release download $env:PRESENTMON -R GameTechDev/PresentMon --pattern 'PresentMon-*-x64.exe' -D pm
           $pm = (Get-ChildItem pm\PresentMon-*-x64.exe)[0].FullName
-          pyinstaller --noconfirm --onefile --windowed --uac-admin --name PUBG_Izleyici --add-binary "$pm;." pubg_izleyici.py
+          pyinstaller --noconfirm --onefile --windowed --uac-admin --name PUBG_Izleyici --add-binary "$pm;." run.py
           if (-not (Test-Path dist\PUBG_Izleyici.exe)) { throw 'Derleme başarısız' }
 
       - name: Sürümü yayımla

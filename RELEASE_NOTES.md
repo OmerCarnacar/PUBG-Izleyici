@@ -1,1 +1,2 @@
-- Düzeltme: lobideki 60 FPS sınırı artık "İşlemci darboğazı" değil "Yok, FPS limitinde" olarak gösterilir
+- İç yapı: tek dosya 19 modüllük pakete bölündü (sensörler, PUBG API, tekrar, koç raporu, arayüz); davranış aynı
+- Her sürümde otomatik kod denetimi (ruff); geliştirici kurulumu için pyproject.toml
